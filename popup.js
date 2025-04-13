@@ -50,6 +50,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       // When recording stops, process and send audio to native host
       mediaRecorder.onstop = () => {
+        log("Processing and sending audio...");
         const completeBlob = new Blob(chunks, { type: options.mimeType });
         const reader = new FileReader();
         reader.onloadend = () => {
@@ -89,9 +90,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
   stopButton.addEventListener("click", () => {
     if (mediaRecorder && mediaRecorder.state !== "inactive") {
+      log("Stopping recording. Please wait...");
+      stopButton.disabled = true; // Prevent repeated clicks
       mediaRecorder.stop();
-      log("Recording stopped. Sending audio...");
-      // Do not stop stream here; wait for onstop
     }
   });
 });
