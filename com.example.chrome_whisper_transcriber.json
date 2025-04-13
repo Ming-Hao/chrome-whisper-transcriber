@@ -1,0 +1,9 @@
+{
+  "name": "com.example.chrome_whisper_transcriber",
+  "description": "Native host for chrome-whisper-transcriber",
+  "path": "/absolute/path/to/your/project/whisper_host.command",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://<your-extension-id>/"
+  ]
+}

@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body {
+      font-family: sans-serif;
+      padding: 10px;
+      min-width: 400px;  /* Minimum width */
+      min-height: 300px; /* Minimum height */
+      box-sizing: border-box;
+      margin: 0;
+    }
+    button {
+      margin-right: 10px;
+      font-size: 16px;
+    }
+    #log {
+      white-space: pre-wrap;
+      margin-top: 10px;
+      font-size: 14px;
+    }
+    .log-line {
+      margin-bottom: 4px;
+    }
+
+    .log-line.log {
+      color: #333;
+    }
+
+    .log-line.warn {
+      color: #b58900;
+    }
+
+    .log-line.error {
+      color: #dc322f;
+      font-weight: bold;
+    }
+
+    .log-line.result {
+      color: #006400;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <button id="startCapture">Start Recording</button>
+  <button id="stopCapture">Stop Recording</button>
+  <pre id="log">Not started</pre>
+  <script src="popup.js"></script>
+</body>
+</html>
