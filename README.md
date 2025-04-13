@@ -35,7 +35,6 @@ pip install -r requirements.txt
 
 ```bash
 brew install ffmpeg    # macOS
-# or use apt / choco depending on your system
 ```
 
 ### 3. Register the Native Messaging Host
@@ -50,7 +49,7 @@ Chrome requires a JSON file to register native messaging hosts. You must copy an
 #### Steps:
 
 ```bash
-cp com.example.com.example.chrome_whisper_transcriber.json ~/Library/Application\ Support/Google/Chrome/NativeMessagingHosts/com.example.chrome_whisper_transcriber.json
+cp com.example.chrome_whisper_transcriber.json ~/Library/Application\ Support/Google/Chrome/NativeMessagingHosts/com.example.chrome_whisper_transcriber.json
 ```
 
 Then **edit the following fields in the JSON file**:
