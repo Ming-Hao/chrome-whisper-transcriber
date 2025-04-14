@@ -8,12 +8,11 @@ import os
 import io
 import soundfile as sf
 import numpy as np
+import av
 
 # Load Whisper model (use "base" for a good balance of speed and accuracy)
 model = whisper.load_model("base")
 
-# Ensure ffmpeg is in PATH
-os.environ["PATH"] += os.pathsep + "/opt/homebrew/bin"
 
 def read_message():
     raw_length = sys.stdin.buffer.read(4)
@@ -31,42 +30,39 @@ def send_message(message):
 
 def convert_webm_to_wav_array(audio_bytes):
     """
-    Converts audio from WebM (Opus codec, recorded by MediaRecorder) to WAV format using ffmpeg,
-    then loads it as a float32 numpy array compatible with Whisper.
+    Convert WebM (Opus codec) audio bytes to a WAV numpy array using PyAV.
+    The audio is resampled to 16 kHz mono and returned as a float32 numpy array.
     """
-    command = [
-        "/opt/homebrew/bin/ffmpeg",
-        "-y",               # Overwrite output
-        "-f", "webm",       # Input format: WebM
-        "-i", "-",          # Read input from stdin
-        # "-c:a", "libopus",  # Optional: explicitly decode Opus
-        "-ar", "16000",     # Resample to 16 kHz
-        "-ac", "1",         # Convert to mono
-        "-f", "wav",        # Output format: WAV
-        "-"                 # Write output to stdout
-    ]
-    
-    result = subprocess.run(
-        command,
-        input=audio_bytes,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE
+    # Open the audio container from bytes
+    container = av.open(io.BytesIO(audio_bytes), format='webm')
+    # Get the first audio stream
+    stream = container.streams.get(audio=0)[0]
+
+    # Set up the resampler to convert audio to 16kHz mono with planar float (fltp)
+    resampler = av.audio.resampler.AudioResampler(
+        format='fltp',  # planar float, corresponds to np.float32 data
+        layout='mono',  # mono channel
+        rate=16000    # 16 kHz sample rate
     )
-    
-    if result.returncode != 0:
-        error_str = result.stderr.decode("utf-8")
-        print("ffmpeg conversion error:", error_str, file=sys.stderr)
-        raise Exception("ffmpeg failed: " + error_str)
-    
-    wav_bytes = result.stdout
-    wav_file = io.BytesIO(wav_bytes)
-    
-    try:
-        data, samplerate = sf.read(wav_file)
-    except Exception as e:
-        raise Exception("Failed to read WAV: " + str(e))
-    
-    return data.astype(np.float32)
+
+    frames = []
+    # Demux and decode audio packets from the container
+    for packet in container.demux(stream):
+        for frame in packet.decode():
+            # Resample the frame; resample() may return a list of frames
+            resampled_frames = resampler.resample(frame)
+            # Extend frames list with the resampled frames
+            frames.extend(resampled_frames)
+
+    if not frames:
+        raise Exception("Decoding audio frames failed.")
+
+    # Convert each audio frame to a numpy array (shape: channels x samples)
+    np_frames = [f.to_ndarray() for f in frames]
+    # Concatenate all frames along the sample axis
+    audio_data = np.concatenate(np_frames, axis=1)
+    # Since the output is mono, take the first channel and ensure the data type is float32
+    return audio_data[0].astype(np.float32)
 
 print("Whisper host started", file=sys.stderr)
 while True:

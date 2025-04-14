@@ -11,9 +11,9 @@ Originally made to help me quickly see raw Japanese lines while watching anime, 
 
 1. The extension uses `chrome.tabCapture` to record tab audio.
 2. When the user clicks **"Stop Recording"**, the recorded audio is sent to a local Python script via Native Messaging.
-3. The Python script uses `ffmpeg` to convert the audio to WAV format.
-4. The audio is passed into the Whisper model for transcription.
-5. The transcribed text is returned and shown in the popup UI.
+3. The Python script uses **PyAV** to decode the WebM audio stream and resample it into a 16kHz mono numpy array.
+4. The audio array is passed into the Whisper model for transcription.
+5. The transcribed text is returned and displayed in the popup UI.
 
 ---
 
@@ -29,15 +29,7 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2. Install `ffmpeg`
-
-`ffmpeg` is required to decode audio from WebM to WAV format.
-
-```bash
-brew install ffmpeg    # macOS
-```
-
-### 3. Register the Native Messaging Host
+### 2. Register the Native Messaging Host
 
 Chrome requires a JSON file to register native messaging hosts. You must copy and modify the included config file:
 
@@ -73,7 +65,7 @@ Then **edit the following fields in the JSON file**:
 
 ---
 
-### 4. Load the Extension
+### 3. Load the Extension
 
 1. Go to `chrome://extensions/`
 2. Enable **Developer mode**
@@ -95,7 +87,6 @@ Then **edit the following fields in the JSON file**:
 ## Requirements
 
 - Python 3.10
-- `ffmpeg` (system-installed)
 - Google Chrome (or any Chromium-based browser)
 - Whisper model (`openai-whisper`), installed via pip
 
