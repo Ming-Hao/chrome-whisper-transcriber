@@ -5,6 +5,7 @@ let chunks = [];
 
 let startButton = null;
 let stopButton = null;
+let port = null;
 
 document.addEventListener("DOMContentLoaded", () => {
   logElement = document.getElementById("log");
@@ -12,7 +13,7 @@ document.addEventListener("DOMContentLoaded", () => {
   stopButton = document.getElementById("stopCapture");
 
   // Initial state: only Start is enabled
-  startButton.disabled = false;
+  startButton.disabled = true;
   stopButton.disabled = true;
 
   startButton.addEventListener("click", () => {
@@ -55,25 +56,11 @@ document.addEventListener("DOMContentLoaded", () => {
         const reader = new FileReader();
         reader.onloadend = () => {
           const base64Audio = reader.result.split(',')[1];
-          chrome.runtime.sendNativeMessage("com.example.chrome_whisper_transcriber", {
-            audioChunk: base64Audio
-          }, (response) => {
-            if (chrome.runtime.lastError) {
-              logError("Native host error: " + chrome.runtime.lastError.message);
-            } else {
-              logResult(response?.text || "[No response]");
-            }
-
-            // Stop the audio stream after sending
-            if (currentStream) {
-              currentStream.getTracks().forEach(track => track.stop());
-              currentStream = null;
-            }
-
-            // Reset button states
-            startButton.disabled = false;
-            stopButton.disabled = true;
-          });
+          if (port) {
+            port.postMessage({
+              audioChunk: base64Audio
+            });
+          }
         };
         reader.readAsDataURL(completeBlob);
       };
@@ -94,6 +81,31 @@ document.addEventListener("DOMContentLoaded", () => {
       stopButton.disabled = true; // Prevent repeated clicks
       mediaRecorder.stop();
     }
+  });
+
+  port = chrome.runtime.connectNative("com.example.chrome_whisper_transcriber");
+  port.onMessage.addListener((response) => {
+    if (response?.text) {
+      if (response.text === "ModelReady") {
+        startButton.disabled = false;
+      }
+      logResult(response.text);
+    } else {
+      logError("No text in response");
+    }
+
+    if (currentStream) {
+      currentStream.getTracks().forEach(track => track.stop());
+      currentStream = null;
+    }
+
+    startButton.disabled = false;
+    stopButton.disabled = true;
+  });
+
+  port.onDisconnect.addListener(() => {
+    logError("Native host disconnected");
+    port = null;
   });
 });
 
@@ -116,8 +128,15 @@ function logResult(text) {
 }
 
 function appendLogLine(text, type) {
+  const now = new Date();
+  const hh = String(now.getHours()).padStart(2, '0');
+  const mm = String(now.getMinutes()).padStart(2, '0');
+  const ss = String(now.getSeconds()).padStart(2, '0');
+  const ms = String(now.getMilliseconds()).padStart(3, '0');
+  const timestamp = `${hh}:${mm}:${ss}.${ms}`;
+
   const line = document.createElement("div");
   line.className = "log-line " + type;
-  line.textContent = `[${new Date().toLocaleTimeString()}] ${text}`;
+  line.textContent = `[${timestamp}] ${text}`;
   logElement.prepend(line);
 }

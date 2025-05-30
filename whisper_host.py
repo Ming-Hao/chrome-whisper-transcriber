@@ -13,7 +13,6 @@ import av
 # Load Whisper model (use "base" for a good balance of speed and accuracy)
 model = whisper.load_model("base")
 
-
 def read_message():
     raw_length = sys.stdin.buffer.read(4)
     if not raw_length:
@@ -65,6 +64,9 @@ def convert_webm_to_wav_array(audio_bytes):
     return audio_data[0].astype(np.float32)
 
 print("Whisper host started", file=sys.stderr)
+send_message({ "text": "Whisper host started" })
+send_message({ "text": "ModelReady" })
+
 while True:
     msg = read_message()
     if msg is None:
