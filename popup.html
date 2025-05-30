@@ -7,20 +7,47 @@
     body {
       font-family: sans-serif;
       padding: 10px;
-      min-width: 400px;  /* Minimum width */
-      min-height: 300px; /* Minimum height */
+      min-width: 400px;
+      min-height: 300px;
       box-sizing: border-box;
       margin: 0;
+      background-color: #f9f9f9;
+      border-radius: 12px;
     }
+
     button {
       margin-right: 10px;
       font-size: 16px;
+      padding: 8px 16px;
+      border: none;
+      border-radius: 8px;
+      background-color: #007bff;
+      color: white;
+      cursor: pointer;
+      transition: background-color 0.2s ease;
     }
+
+    button:disabled {
+      background-color: #ccc;
+      cursor: not-allowed;
+    }
+
+    button:hover:not(:disabled) {
+      background-color: #0056b3;
+    }
+
     #log {
       white-space: pre-wrap;
       margin-top: 10px;
       font-size: 14px;
+      background-color: white;
+      padding: 10px;
+      border-radius: 10px;
+      border: 1px solid #ccc;
+      height: 200px;
+      overflow-y: auto;
     }
+
     .log-line {
       margin-bottom: 4px;
     }
