@@ -3,10 +3,7 @@ import struct
 import json
 import base64
 import whisper
-import subprocess
-import os
 import io
-import soundfile as sf
 import numpy as np
 import av
 
