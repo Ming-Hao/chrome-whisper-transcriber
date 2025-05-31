@@ -8,6 +8,15 @@ let stopButton = null;
 let port = null;
 
 document.addEventListener("DOMContentLoaded", () => {
+  document.getElementById('closePopup').addEventListener('click', () => {
+    window.close();
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      window.close();
+    }
+  });
   logElement = document.getElementById("log");
   startButton = document.getElementById("startCapture");
   stopButton = document.getElementById("stopCapture");
