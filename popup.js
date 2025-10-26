@@ -7,6 +7,8 @@ let startButton = null;
 let stopButton = null;
 let port = null;
 
+const TOGGLE_HOTKEY_KEY = "r"; // Use Ctrl + R to switch
+
 document.addEventListener("DOMContentLoaded", () => {
   document.getElementById('closePopup').addEventListener('click', () => {
     window.close();
@@ -15,6 +17,12 @@ document.addEventListener("DOMContentLoaded", () => {
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') {
       window.close();
+      return;
+    }
+
+    if (isToggleHotkey(event)) {
+      event.preventDefault();
+      handleToggleHotkey();
     }
   });
   logElement = document.getElementById("log");
@@ -25,72 +33,9 @@ document.addEventListener("DOMContentLoaded", () => {
   startButton.disabled = true;
   stopButton.disabled = true;
 
-  startButton.addEventListener("click", () => {
-    // Stop existing stream if any
-    if (currentStream) {
-      currentStream.getTracks().forEach(track => track.stop());
-      currentStream = null;
-    }
+  startButton.addEventListener("click", startRecordingFlow);
 
-    chrome.tabCapture.capture({ audio: true, video: false }, (stream) => {
-      if (chrome.runtime.lastError || !stream) {
-        logError("Failed to capture: " + (chrome.runtime.lastError?.message || "No audio stream"));
-        return;
-      }
-
-      currentStream = stream;
-
-      // Play the audio so the tab still outputs sound
-      const audio = new Audio();
-      audio.srcObject = stream;
-      audio.play().catch(err => {
-        logWarning("Audio playback failed: " + err.message);
-      });
-
-      const options = { mimeType: "audio/webm;codecs=opus" };
-      mediaRecorder = new MediaRecorder(stream, options);
-      chunks = [];
-
-      // Collect audio chunks
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) {
-          chunks.push(e.data);
-        }
-      };
-
-      // When recording stops, process and send audio to native host
-      mediaRecorder.onstop = () => {
-        log("Processing and sending audio...");
-        const completeBlob = new Blob(chunks, { type: options.mimeType });
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          const base64Audio = reader.result.split(',')[1];
-          if (port) {
-            port.postMessage({
-              audioChunk: base64Audio
-            });
-          }
-        };
-        reader.readAsDataURL(completeBlob);
-      };
-
-      // Start recording
-      mediaRecorder.start();
-      log("Recording started. Click 'Stop Recording' to send audio.");
-
-      // Update button states
-      startButton.disabled = true;
-      stopButton.disabled = false;
-    });
-  });
-
-  stopButton.addEventListener("click", () => {
-    if (mediaRecorder && mediaRecorder.state !== "inactive") {
-      log("Stopping recording. Please wait...");
-      stopButton.disabled = true; // Prevent repeated clicks
-      mediaRecorder.stop();
-    }
-  });
+  stopButton.addEventListener("click", stopRecordingFlow);
 
   port = chrome.runtime.connectNative("com.example.chrome_whisper_transcriber");
   port.onMessage.addListener((response) => {
@@ -122,6 +67,95 @@ document.addEventListener("DOMContentLoaded", () => {
     port = null;
   });
 });
+
+function startRecordingFlow() {
+  if (startButton.disabled) {
+    return;
+  }
+
+  // Stop existing stream if any
+  if (currentStream) {
+    currentStream.getTracks().forEach(track => track.stop());
+    currentStream = null;
+  }
+
+  chrome.tabCapture.capture({ audio: true, video: false }, (stream) => {
+    if (chrome.runtime.lastError || !stream) {
+      logError("Failed to capture: " + (chrome.runtime.lastError?.message || "No audio stream"));
+      return;
+    }
+
+    currentStream = stream;
+
+    // Play the audio so the tab still outputs sound
+    const audio = new Audio();
+    audio.srcObject = stream;
+    audio.play().catch(err => {
+      logWarning("Audio playback failed: " + err.message);
+    });
+
+    const options = { mimeType: "audio/webm;codecs=opus" };
+    mediaRecorder = new MediaRecorder(stream, options);
+    chunks = [];
+
+    // Collect audio chunks
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) {
+        chunks.push(e.data);
+      }
+    };
+
+    // When recording stops, process and send audio to native host
+    mediaRecorder.onstop = () => {
+      log("Processing and sending audio...");
+      const completeBlob = new Blob(chunks, { type: options.mimeType });
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64Audio = reader.result.split(',')[1];
+        if (port) {
+          port.postMessage({
+            audioChunk: base64Audio
+          });
+        }
+      };
+      reader.readAsDataURL(completeBlob);
+    };
+
+    // Start recording
+    mediaRecorder.start();
+    log("Recording started. Click 'Stop Recording' to send audio.");
+
+    // Update button states
+    startButton.disabled = true;
+    stopButton.disabled = false;
+  });
+}
+
+function stopRecordingFlow() {
+  if (!mediaRecorder || mediaRecorder.state === "inactive") {
+    return;
+  }
+  log("Stopping recording. Please wait...");
+  stopButton.disabled = true; // Prevent repeated clicks
+  mediaRecorder.stop();
+}
+
+function isToggleHotkey(event) {
+  const modifierPressed = event.ctrlKey || event.metaKey;
+  return modifierPressed &&
+    !event.altKey &&
+    event.key.toLowerCase() === TOGGLE_HOTKEY_KEY;
+}
+
+function handleToggleHotkey() {
+  if (mediaRecorder && mediaRecorder.state === "recording") {
+    stopRecordingFlow();
+  } else if (!startButton.disabled) {
+    startRecordingFlow();
+  } else {
+    logWarning("Hotkey ignored: recorder busy.");
+  }
+}
 
 // Logging helpers
 
