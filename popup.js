@@ -95,19 +95,24 @@ document.addEventListener("DOMContentLoaded", () => {
   port = chrome.runtime.connectNative("com.example.chrome_whisper_transcriber");
   port.onMessage.addListener((response) => {
     if (response?.text) {
-      if (response.text === "ModelReady") {
-        startButton.disabled = false;
+      switch (response.type) {
+        case "result":
+          logResult(response.text);    // green and copy button
+          break;
+        case "error":
+          logError(response.text);     // red
+          break;
+        default:                       // status
+          log(response.text);          // grey
       }
-      logResult(response.text);
     } else {
       logError("No text in response");
     }
 
     if (currentStream) {
-      currentStream.getTracks().forEach(track => track.stop());
+      currentStream.getTracks().forEach(t => t.stop());
       currentStream = null;
     }
-
     startButton.disabled = false;
     stopButton.disabled = true;
   });
@@ -137,6 +142,11 @@ function logResult(text) {
 }
 
 function appendLogLine(text, type) {
+  // Map unknown types to 'log' so CSS colors apply
+  const displayType = (type === "result" || type === "error" || type === "warn" || type === "log")
+    ? type
+    : "log";
+
   const now = new Date();
   const hh = String(now.getHours()).padStart(2, '0');
   const mm = String(now.getMinutes()).padStart(2, '0');
@@ -145,7 +155,27 @@ function appendLogLine(text, type) {
   const timestamp = `${hh}:${mm}:${ss}.${ms}`;
 
   const line = document.createElement("div");
-  line.className = "log-line " + type;
-  line.textContent = `[${timestamp}] ${text}`;
+  line.className = "log-line " + displayType;
+
+  const span = document.createElement("span");
+  span.textContent = `[${timestamp}] ${text}`;
+  line.appendChild(span);
+
+  if (displayType === "result") {
+    const copyBtn = document.createElement("button");
+    copyBtn.className = "copy-icon-btn";
+    copyBtn.innerHTML = "📋";
+    copyBtn.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(text); // copy without timestamp
+        copyBtn.innerHTML = "✅";
+        setTimeout(() => { copyBtn.innerHTML = "📋"; }, 1000);
+      } catch (err) {
+        console.error("Clipboard copy failed:", err);
+      }
+    });
+    line.appendChild(copyBtn);
+  }
+
   logElement.prepend(line);
 }

@@ -61,8 +61,8 @@ def convert_webm_to_wav_array(audio_bytes):
     return audio_data[0].astype(np.float32)
 
 print("Whisper host started", file=sys.stderr)
-send_message({ "text": "Whisper host started" })
-send_message({ "text": "ModelReady" })
+send_message({ "type": "status", "text": "Whisper host started" })
+send_message({ "type": "status", "text": "ModelReady" })
 
 while True:
     msg = read_message()
@@ -85,8 +85,8 @@ while True:
             print("Transcription result:", text, file=sys.stderr)
 
             # Send result back to extension
-            send_message({ "text": text or "[Empty]" })
+            send_message({ "type": "result", "text": text or "[Empty]" })
 
         except Exception as e:
             print("Error:", str(e), file=sys.stderr)
-            send_message({ "text": f"[Error] {str(e)}" })
+            send_message({ "type": "error", "text": f"[Error] {str(e)}" })
