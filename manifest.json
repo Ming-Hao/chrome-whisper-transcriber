@@ -1,11 +1,12 @@
 {
   "name": "chrome-whisper-transcriber",
   "description": "A Chrome Extension that captures tab audio and transcribes it locally using Whisper via native messaging.",
-  "version": "1.0",
+  "version": "1.1",
   "manifest_version": 3,
   "permissions": [
     "nativeMessaging",
-    "tabCapture"
+    "tabCapture",
+    "tabs"
   ],
   "background": { 
     "service_worker": "background.js",

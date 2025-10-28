@@ -2,6 +2,7 @@ let currentStream = null;
 let mediaRecorder = null;
 let logElement = null;
 let chunks = [];
+let currentTabTitle = null;
 
 let startButton = null;
 let stopButton = null;
@@ -79,13 +80,13 @@ function ensureBgPort() {
   }
 }
 
-function sendAudioToBackground(base64Audio) {
+function sendAudioToBackground(base64Audio, tabTitle) {
   if (!ensureBgPort()) {
     logError("No background port available");
     return;
   }
   try {
-    bgPort.postMessage({ type: "audio", base64: base64Audio });
+    bgPort.postMessage({ type: "audio", base64: base64Audio, tabTitle: tabTitle || null });
   } catch (e) {
     logError("Send to background failed: " + (e?.message || e));
   }
@@ -119,6 +120,23 @@ document.addEventListener("DOMContentLoaded", () => {
   stopButton.addEventListener("click", stopRecordingFlow);
 });
 
+function resolveActiveTabTitle(callback) {
+  try {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (chrome.runtime.lastError) {
+        logWarning("Cannot read tab title: " + chrome.runtime.lastError.message);
+        callback(null);
+        return;
+      }
+      const title = tabs && tabs.length ? tabs[0].title || null : null;
+      callback(title);
+    });
+  } catch (e) {
+    logWarning("Cannot query tab title: " + (e?.message || e));
+    callback(null);
+  }
+}
+
 function startRecordingFlow() {
   if (startButton.disabled) return;
 
@@ -128,49 +146,53 @@ function startRecordingFlow() {
     currentStream = null;
   }
 
-  chrome.tabCapture.capture({ audio: true, video: false }, (stream) => {
-    if (chrome.runtime.lastError || !stream) {
-      logError("Failed to capture: " + (chrome.runtime.lastError?.message || "No audio stream"));
-      return;
-    }
+  resolveActiveTabTitle((title) => {
+    currentTabTitle = title;
 
-    currentStream = stream;
-
-    // Keep tab audio audible
-    const audio = new Audio();
-    audio.srcObject = stream;
-    audio.play().catch(err => {
-      logWarning("Audio playback failed: " + err.message);
-    });
-
-    const options = { mimeType: "audio/webm;codecs=opus" };
-    mediaRecorder = new MediaRecorder(stream, options);
-    chunks = [];
-
-    mediaRecorder.ondataavailable = (e) => {
-      if (e.data && e.data.size > 0) {
-        chunks.push(e.data);
+    chrome.tabCapture.capture({ audio: true, video: false }, (stream) => {
+      if (chrome.runtime.lastError || !stream) {
+        logError("Failed to capture: " + (chrome.runtime.lastError?.message || "No audio stream"));
+        return;
       }
-    };
 
-    mediaRecorder.onstop = () => {
-      log("Processing and sending audio...");
-      const completeBlob = new Blob(chunks, { type: options.mimeType });
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const base64Audio = reader.result.split(',')[1];
-        sendAudioToBackground(base64Audio); // << send to background
+      currentStream = stream;
+
+      // Keep tab audio audible
+      const audio = new Audio();
+      audio.srcObject = stream;
+      audio.play().catch(err => {
+        logWarning("Audio playback failed: " + err.message);
+      });
+
+      const options = { mimeType: "audio/webm;codecs=opus" };
+      mediaRecorder = new MediaRecorder(stream, options);
+      chunks = [];
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          chunks.push(e.data);
+        }
       };
-      reader.readAsDataURL(completeBlob);
-    };
 
-    mediaRecorder.start();
-    log("Recording started. Click 'Stop Recording' to send audio.");
+      mediaRecorder.onstop = () => {
+        log("Processing and sending audio...");
+        const completeBlob = new Blob(chunks, { type: options.mimeType });
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const base64Audio = reader.result.split(',')[1];
+          sendAudioToBackground(base64Audio, currentTabTitle); // << send to background
+        };
+        reader.readAsDataURL(completeBlob);
+      };
 
-    startButton.disabled = true;
-    stopButton.disabled = true;
+      mediaRecorder.start();
+      log("Recording started. Click 'Stop Recording' to send audio.");
 
-    setTimeout(() => { stopButton.disabled = false; }, 150);
+      startButton.disabled = true;
+      stopButton.disabled = true;
+
+      setTimeout(() => { stopButton.disabled = false; }, 150);
+    });
   });
 }
 

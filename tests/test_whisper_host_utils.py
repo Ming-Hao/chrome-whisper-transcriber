@@ -17,13 +17,24 @@ class WhisperHostUtilsTest(unittest.TestCase):
         self.mock_model = mock.Mock()
         self.mock_model.transcribe.return_value = {"text": " hello world "}
 
-    def test_save_audio_bytes_writes_file(self):
+    def test_save_recording_bundle_writes_files(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            saved_path = utils.save_audio_bytes(self.fake_audio_bytes, output_dir=tmpdir)
-            self.assertTrue(os.path.exists(saved_path))
-            with open(saved_path, "rb") as f:
+            saved_paths = utils.save_recording_bundle(
+                self.fake_audio_bytes,
+                "hello world",
+                output_dir=tmpdir,
+                tab_title="My Tab / Name",
+            )
+            self.assertTrue(saved_paths["folder"].startswith(tmpdir))
+            self.assertTrue(os.path.isdir(saved_paths["folder"]))
+            self.assertTrue(os.path.exists(saved_paths["audio"]))
+            self.assertTrue(os.path.exists(saved_paths["text"]))
+            folder_basename = os.path.basename(saved_paths["folder"])
+            self.assertTrue(folder_basename.startswith("My Tab _ Name-"))
+            with open(saved_paths["audio"], "rb") as f:
                 self.assertEqual(f.read(), self.fake_audio_bytes)
-            self.assertTrue(saved_path.endswith(".webm"))
+            with open(saved_paths["text"], "r", encoding="utf-8") as f:
+                self.assertEqual(f.read(), "hello world")
 
     def test_transcribe_audio_chunk_without_saving(self):
         with mock.patch.object(utils, "convert_webm_to_wav_array", return_value=self.fake_wav_array) as convert_mock:
@@ -37,18 +48,26 @@ class WhisperHostUtilsTest(unittest.TestCase):
     def test_transcribe_audio_chunk_with_saving(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             with mock.patch.object(utils, "convert_webm_to_wav_array", return_value=self.fake_wav_array):
-                text, saved_path = utils.transcribe_audio_chunk(
+                text, saved_paths = utils.transcribe_audio_chunk(
                     self.fake_audio_b64,
                     self.mock_model,
                     save_to_disk=True,
                     output_dir=tmpdir,
+                    tab_title="Another:Title",
                 )
 
             self.assertEqual(text, "hello world")
-            self.assertTrue(saved_path.startswith(tmpdir))
-            self.assertTrue(os.path.exists(saved_path))
-            with open(saved_path, "rb") as f:
+            self.assertIsInstance(saved_paths, dict)
+            self.assertTrue(saved_paths["folder"].startswith(tmpdir))
+            self.assertTrue(os.path.isdir(saved_paths["folder"]))
+            self.assertTrue(os.path.exists(saved_paths["audio"]))
+            self.assertTrue(os.path.exists(saved_paths["text"]))
+            folder_basename = os.path.basename(saved_paths["folder"])
+            self.assertTrue(folder_basename.startswith("Another_Title-"))
+            with open(saved_paths["audio"], "rb") as f:
                 self.assertEqual(f.read(), self.fake_audio_bytes)
+            with open(saved_paths["text"], "r", encoding="utf-8") as f:
+                self.assertEqual(f.read(), "hello world")
 
 
 if __name__ == "__main__":

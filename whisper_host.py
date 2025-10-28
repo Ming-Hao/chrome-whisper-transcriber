@@ -35,19 +35,29 @@ while True:
         try:
             print("Received audio chunk", file=sys.stderr)
 
-            text, saved_path = transcribe_audio_chunk(
+            text, saved_paths = transcribe_audio_chunk(
                 msg["audioChunk"],
                 model,
-                save_to_disk=msg.get("saveToDisk", False),
+                save_to_disk=msg.get("saveToDisk", True),
+                tab_title=msg.get("tabTitle"),
             )
             print("Transcription result:", text, file=sys.stderr)
-            if saved_path:
-                print("Audio saved to", saved_path, file=sys.stderr)
+            if saved_paths:
+                folder = saved_paths.get("folder")
+                audio_path = saved_paths.get("audio")
+                text_path = saved_paths.get("text")
+                if folder:
+                    print("Files saved under", folder, file=sys.stderr)
+                if audio_path:
+                    print("Audio file:", audio_path, file=sys.stderr)
+                if text_path:
+                    print("Transcript file:", text_path, file=sys.stderr)
 
             # Send result back to extension
             send_message({ "type": "result", "text": text })
-            if saved_path:
-                send_message({ "type": "status", "text": f"Audio saved to {saved_path}" })
+            if saved_paths:
+                folder = saved_paths.get("folder") or saved_paths.get("audio")
+                send_message({ "type": "status", "text": f"Saved audio & transcript to {folder}" })
 
         except Exception as e:
             print("Error:", str(e), file=sys.stderr)

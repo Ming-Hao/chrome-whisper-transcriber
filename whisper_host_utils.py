@@ -1,5 +1,6 @@
 import base64
 import io
+import re
 from datetime import datetime
 from pathlib import Path
 import uuid
@@ -35,34 +36,61 @@ def convert_webm_to_wav_array(audio_bytes):
     return audio_data[0].astype(np.float32)
 
 
-def save_audio_bytes(audio_bytes, output_dir="recordings"):
-    """Persist raw WebM bytes to disk and return the file path."""
+MAX_PREFIX_CHARS = 60
+
+
+def _build_folder_prefix(tab_title):
+    if not tab_title or not tab_title.strip():
+        return "recording"
+
+    collapsed = re.sub(r"\s+", " ", tab_title).strip()
+    sanitized = re.sub(r"[\\/:*?\"<>|]+", "_", collapsed)
+    trimmed = sanitized.replace("\0", "")[:MAX_PREFIX_CHARS].strip()
+    cleaned = trimmed.strip("._-")
+    return cleaned or "recording"
+
+
+def save_recording_bundle(audio_bytes, transcript_text, output_dir="recordings", tab_title=None):
+    """Persist audio and transcript into a timestamped folder and return the paths."""
     output_dir_path = Path(output_dir)
     output_dir_path.mkdir(parents=True, exist_ok=True)
 
     timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
     token = uuid.uuid4().hex[:6]
-    filename = f"recording-{timestamp}-{token}.webm"
-    file_path = output_dir_path / filename
+    prefix = _build_folder_prefix(tab_title)
+    folder_path = output_dir_path / f"{prefix}-{timestamp}-{token}"
+    folder_path.mkdir(parents=True, exist_ok=True)
 
-    with file_path.open("wb") as f:
+    audio_path = folder_path / "audio.webm"
+    text_path = folder_path / "transcript.txt"
+
+    with audio_path.open("wb") as f:
         f.write(audio_bytes)
 
-    return str(file_path)
+    with text_path.open("w", encoding="utf-8") as f:
+        f.write(transcript_text)
+
+    return {
+        "folder": str(folder_path),
+        "audio": str(audio_path),
+        "text": str(text_path),
+    }
 
 
-def transcribe_audio_chunk(audio_chunk_b64, model, save_to_disk=False, output_dir="recordings"):
+def transcribe_audio_chunk(audio_chunk_b64, model, save_to_disk=False, output_dir="recordings", tab_title=None):
     """
     Decode a base64-encoded WebM chunk, optionally save it, convert to wav array,
     and run Whisper. Returns a tuple of (transcript, saved_path).
     """
     audio_bytes = base64.b64decode(audio_chunk_b64)
 
-    saved_path = None
-    if save_to_disk:
-        saved_path = save_audio_bytes(audio_bytes, output_dir)
-
     wav_array = convert_webm_to_wav_array(audio_bytes)
     result = model.transcribe(wav_array)
     text = result.get("text", "").strip()
-    return (text or "[Empty]", saved_path)
+    final_text = text or "[Empty]"
+
+    saved_paths = None
+    if save_to_disk:
+        saved_paths = save_recording_bundle(audio_bytes, final_text, output_dir, tab_title=tab_title)
+
+    return (final_text, saved_paths)
