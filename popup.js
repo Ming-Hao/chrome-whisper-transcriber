@@ -5,11 +5,95 @@ let chunks = [];
 
 let startButton = null;
 let stopButton = null;
-let port = null;
 
 const TOGGLE_HOTKEY_KEY = "r"; // Use Ctrl + R to switch
 
+let bgPort = null;
+let hostReadyReceived = false;
+
+
+function lockUI() {
+  startButton.disabled = true;
+  stopButton.disabled = true;
+}
+function enableStart() {
+  startButton.disabled = false;
+  stopButton.disabled = true;
+}
+
+function connectBackground() {
+  bgPort = chrome.runtime.connect({ name: "popup-bridge" });
+  
+  setTimeout(() => {
+    if (hostReadyReceived == false) {
+      bgPort.postMessage({ type: "ensure-native" });
+    }
+  }, 100);
+
+  bgPort.onMessage.addListener((msg) => {
+    if (!msg) return;
+
+    switch (msg.type) {
+      case "host-ready":
+        enableStart();
+        hostReadyReceived = true;
+        log(msg.text || "host ready");
+        break;
+
+      case "result":
+        enableStart();
+        logResult(msg.text || "");
+        break;
+
+      case "error":
+        enableStart();
+        logError(msg.text || "");
+
+        if (currentStream) {
+          currentStream.getTracks().forEach(t => t.stop());
+          currentStream = null;
+        }
+        break;
+
+      case "status":
+      default:
+        log(msg.text || "");
+    }
+  });
+
+
+  bgPort.onDisconnect.addListener(() => {
+    logWarning("Background port disconnected");
+    bgPort = null;
+  });
+}
+
+function ensureBgPort() {
+  if (bgPort) return true;
+  try {
+    connectBackground();
+    return !!bgPort;
+  } catch (e) {
+    logError("Cannot connect to background: " + (e?.message || e));
+    return false;
+  }
+}
+
+function sendAudioToBackground(base64Audio) {
+  if (!ensureBgPort()) {
+    logError("No background port available");
+    return;
+  }
+  try {
+    bgPort.postMessage({ type: "audio", base64: base64Audio });
+  } catch (e) {
+    logError("Send to background failed: " + (e?.message || e));
+  }
+}
+
 document.addEventListener("DOMContentLoaded", () => {
+  connectBackground();
+
   document.getElementById('closePopup').addEventListener('click', () => {
     window.close();
   });
@@ -19,59 +103,24 @@ document.addEventListener("DOMContentLoaded", () => {
       window.close();
       return;
     }
-
     if (isToggleHotkey(event)) {
       event.preventDefault();
       handleToggleHotkey();
     }
   });
+
   logElement = document.getElementById("log");
   startButton = document.getElementById("startCapture");
   stopButton = document.getElementById("stopCapture");
 
-  // Initial state: only Start is enabled
-  startButton.disabled = true;
-  stopButton.disabled = true;
+  lockUI();
 
   startButton.addEventListener("click", startRecordingFlow);
-
   stopButton.addEventListener("click", stopRecordingFlow);
-
-  port = chrome.runtime.connectNative("com.example.chrome_whisper_transcriber");
-  port.onMessage.addListener((response) => {
-    if (response?.text) {
-      switch (response.type) {
-        case "result":
-          logResult(response.text);    // green and copy button
-          break;
-        case "error":
-          logError(response.text);     // red
-          break;
-        default:                       // status
-          log(response.text);          // grey
-      }
-    } else {
-      logError("No text in response");
-    }
-
-    if (currentStream) {
-      currentStream.getTracks().forEach(t => t.stop());
-      currentStream = null;
-    }
-    startButton.disabled = false;
-    stopButton.disabled = true;
-  });
-
-  port.onDisconnect.addListener(() => {
-    logError("Native host disconnected");
-    port = null;
-  });
 });
 
 function startRecordingFlow() {
-  if (startButton.disabled) {
-    return;
-  }
+  if (startButton.disabled) return;
 
   // Stop existing stream if any
   if (currentStream) {
@@ -87,7 +136,7 @@ function startRecordingFlow() {
 
     currentStream = stream;
 
-    // Play the audio so the tab still outputs sound
+    // Keep tab audio audible
     const audio = new Audio();
     audio.srcObject = stream;
     audio.play().catch(err => {
@@ -98,53 +147,43 @@ function startRecordingFlow() {
     mediaRecorder = new MediaRecorder(stream, options);
     chunks = [];
 
-    // Collect audio chunks
     mediaRecorder.ondataavailable = (e) => {
       if (e.data && e.data.size > 0) {
         chunks.push(e.data);
       }
     };
 
-    // When recording stops, process and send audio to native host
     mediaRecorder.onstop = () => {
       log("Processing and sending audio...");
       const completeBlob = new Blob(chunks, { type: options.mimeType });
       const reader = new FileReader();
       reader.onloadend = () => {
         const base64Audio = reader.result.split(',')[1];
-        if (port) {
-          port.postMessage({
-            audioChunk: base64Audio
-          });
-        }
+        sendAudioToBackground(base64Audio); // << send to background
       };
       reader.readAsDataURL(completeBlob);
     };
 
-    // Start recording
     mediaRecorder.start();
     log("Recording started. Click 'Stop Recording' to send audio.");
 
-    // Update button states
     startButton.disabled = true;
-    stopButton.disabled = false;
+    stopButton.disabled = true;
+
+    setTimeout(() => { stopButton.disabled = false; }, 150);
   });
 }
 
 function stopRecordingFlow() {
-  if (!mediaRecorder || mediaRecorder.state === "inactive") {
-    return;
-  }
+  if (!mediaRecorder || mediaRecorder.state === "inactive") return;
   log("Stopping recording. Please wait...");
-  stopButton.disabled = true; // Prevent repeated clicks
+  stopButton.disabled = true;
   mediaRecorder.stop();
 }
 
 function isToggleHotkey(event) {
   const modifierPressed = event.ctrlKey || event.metaKey;
-  return modifierPressed &&
-    !event.altKey &&
-    event.key.toLowerCase() === TOGGLE_HOTKEY_KEY;
+  return modifierPressed && !event.altKey && event.key.toLowerCase() === TOGGLE_HOTKEY_KEY;
 }
 
 function handleToggleHotkey() {
@@ -158,29 +197,13 @@ function handleToggleHotkey() {
 }
 
 // Logging helpers
-
-function log(text) {
-  appendLogLine(text, "log");
-}
-
-function logWarning(text) {
-  appendLogLine(text, "warn");
-}
-
-function logError(text) {
-  appendLogLine(text, "error");
-}
-
-function logResult(text) {
-  appendLogLine(text, "result");
-}
+function log(text) { appendLogLine(text, "log"); }
+function logWarning(text) { appendLogLine(text, "warn"); }
+function logError(text) { appendLogLine(text, "error"); }
+function logResult(text) { appendLogLine(text, "result"); }
 
 function appendLogLine(text, type) {
-  // Map unknown types to 'log' so CSS colors apply
-  const displayType = (type === "result" || type === "error" || type === "warn" || type === "log")
-    ? type
-    : "log";
-
+  const displayType = (type === "result" || type === "error" || type === "warn" || type === "log") ? type : "log";
   const now = new Date();
   const hh = String(now.getHours()).padStart(2, '0');
   const mm = String(now.getMinutes()).padStart(2, '0');

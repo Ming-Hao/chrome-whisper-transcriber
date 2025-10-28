@@ -7,6 +7,10 @@
     "nativeMessaging",
     "tabCapture"
   ],
+  "background": { 
+    "service_worker": "background.js",
+    "type": "module"
+  },
   "action": {
     "default_popup": "popup.html",
     "default_icon": "icons/microphone-black-shape.png"
