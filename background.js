@@ -181,6 +181,21 @@ async function forwardAudioToNative(base64Audio, tabTitle) {
   }
 }
 
+function openRecordingsFolder() {
+  const np = ensureNativePort();
+  if (!np) {
+    broadcast({ type: "error", text: "Cannot open recordings folder: native host is not running." });
+    setBadge("error");
+    return;
+  }
+  try {
+    np.postMessage({ command: "open-recordings-folder" });
+    broadcast({ type: "status", text: "Attempting to open recordings folder..." });
+  } catch (err) {
+    broadcast({ type: "error", text: "Failed to open recordings folder: " + (err?.message || err) });
+  }
+}
+
 async function startRecordingFlow() {
   if (recordingState.status !== "idle") {
     broadcast({ type: "warn", text: "Recording already in progress." });
@@ -323,6 +338,11 @@ chrome.runtime.onConnect.addListener((port) => {
 
     if (msg.type === "stop-recording") {
       stopRecording();
+      return;
+    }
+
+    if (msg.type === "open-recordings-folder") {
+      openRecordingsFolder();
       return;
     }
   });

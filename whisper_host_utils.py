@@ -1,6 +1,9 @@
 import base64
 import io
+import os
+import platform
 import re
+import subprocess
 from datetime import datetime
 from pathlib import Path
 import uuid
@@ -75,6 +78,36 @@ def save_recording_bundle(audio_bytes, transcript_text, output_dir="recordings",
         "audio": str(audio_path),
         "text": str(text_path),
     }
+
+
+def ensure_recordings_root(output_dir="recordings"):
+    """
+    Ensure the recordings root directory exists and return it as a Path.
+    """
+    output_dir_path = Path(output_dir)
+    output_dir_path.mkdir(parents=True, exist_ok=True)
+    return output_dir_path
+
+
+def open_recordings_folder(output_dir="recordings"):
+    """
+    Open the recordings folder in the user's file explorer. Returns the folder path.
+    """
+    folder_path = ensure_recordings_root(output_dir)
+    folder_str = str(folder_path)
+    system = platform.system()
+
+    try:
+        if system == "Windows":
+            os.startfile(folder_str)  # type: ignore[attr-defined]
+        elif system == "Darwin":
+            subprocess.Popen(["open", folder_str])
+        else:
+            subprocess.Popen(["xdg-open", folder_str])
+    except Exception as exc:
+        raise RuntimeError(f"Unable to open recordings folder: {exc}") from exc
+
+    return folder_str
 
 
 def transcribe_audio_chunk(audio_chunk_b64, model, save_to_disk=False, output_dir="recordings", tab_title=None):

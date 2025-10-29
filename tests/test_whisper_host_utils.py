@@ -69,6 +69,24 @@ class WhisperHostUtilsTest(unittest.TestCase):
             with open(saved_paths["text"], "r", encoding="utf-8") as f:
                 self.assertEqual(f.read(), "hello world")
 
+    def test_open_recordings_folder_mac(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch("whisper_host_utils.platform.system", return_value="Darwin"), \
+                 mock.patch("whisper_host_utils.subprocess.Popen") as popen_mock:
+                folder = utils.open_recordings_folder(output_dir=tmpdir)
+
+        popen_mock.assert_called_once_with(["open", tmpdir])
+        self.assertEqual(folder, tmpdir)
+
+    def test_open_recordings_folder_linux(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch("whisper_host_utils.platform.system", return_value="Linux"), \
+                 mock.patch("whisper_host_utils.subprocess.Popen") as popen_mock:
+                folder = utils.open_recordings_folder(output_dir=tmpdir)
+
+        popen_mock.assert_called_once_with(["xdg-open", tmpdir])
+        self.assertEqual(folder, tmpdir)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -21,6 +21,7 @@
       align-items: center;
       gap: 8px;
       margin-bottom: 10px;
+      flex-wrap: wrap;
     }
 
     .controls button {
@@ -39,6 +40,14 @@
 
     #startCapture {
       background-color: #f8d7da;
+    }
+
+    #openRecordings {
+      background-color: #e6f4ea;
+    }
+
+    #openRecordings:hover:not(:disabled) {
+      background-color: #d2ebda;
     }
 
     #startCapture:hover:not(:disabled) {
@@ -141,6 +150,7 @@
   <div class="controls">
     <button id="startCapture" title="Start Recording">&#x1F534;</button> <!-- 🔴 -->
     <button id="stopCapture" title="Stop Recording" disabled>&#x23F9;</button> <!-- ⏹ -->
+    <button id="openRecordings" title="Open recordings folder">&#x1F4C2;</button> <!-- 📂 -->
     <button id="closePopup" title="Close">&#x2716;</button> <!-- ❌ -->
   </div>
   <pre id="log">Waiting for start...</pre>

@@ -3,7 +3,7 @@ import struct
 import json
 import whisper
 
-from whisper_host_utils import transcribe_audio_chunk
+from whisper_host_utils import transcribe_audio_chunk, open_recordings_folder
 
 # Load Whisper model (use "base" for a good balance of speed and accuracy)
 model = whisper.load_model("base")
@@ -30,6 +30,17 @@ while True:
     msg = read_message()
     if msg is None:
         break
+
+    if msg.get("command") == "open-recordings-folder":
+        try:
+            folder_path = open_recordings_folder(output_dir=msg.get("outputDir", "recordings"))
+            send_message({ "type": "status", "text": f"Recordings folder opened: {folder_path}" })
+            print(f"Opened recordings folder at {folder_path}", file=sys.stderr)
+        except Exception as e:
+            error_text = f"Failed to open recordings folder: {str(e)}"
+            print(error_text, file=sys.stderr)
+            send_message({ "type": "error", "text": error_text })
+        continue
 
     if "audioChunk" in msg:
         try:

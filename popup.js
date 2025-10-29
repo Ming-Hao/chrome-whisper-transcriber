@@ -1,6 +1,7 @@
 let logElement = null;
 let startButton = null;
 let stopButton = null;
+let openFolderButton = null;
 
 const TOGGLE_HOTKEY_KEY = "e"; // Use Alt/Option + E to switch
 
@@ -129,11 +130,15 @@ document.addEventListener("DOMContentLoaded", () => {
   logElement = document.getElementById("log");
   startButton = document.getElementById("startCapture");
   stopButton = document.getElementById("stopCapture");
+  openFolderButton = document.getElementById("openRecordings");
 
   lockUI();
 
   startButton.addEventListener("click", startRecordingFlow);
   stopButton.addEventListener("click", stopRecordingFlow);
+  if (openFolderButton) {
+    openFolderButton.addEventListener("click", openRecordingsFolder);
+  }
 });
 
 function startRecordingFlow() {
@@ -160,6 +165,17 @@ function stopRecordingFlow() {
     bgPort.postMessage({ type: "stop-recording" });
   } catch (e) {
     logError("Stop command failed: " + (e?.message || e));
+  }
+}
+
+function openRecordingsFolder() {
+  if (!ensureBgPort()) return;
+
+  try {
+    bgPort.postMessage({ type: "open-recordings-folder" });
+    log("Requesting to open the recordings folder...");
+  } catch (e) {
+    logError("Failed to send the open folder command: " + (e?.message || e));
   }
 }
 
