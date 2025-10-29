@@ -3,17 +3,20 @@
 Just a small personal experiment for playing with Chrome Extensions and native messaging.  
 This extension captures audio from a browser tab and sends it to a local Python script that runs OpenAI Whisper for transcription.
 
+You can now trigger recordings directly with a keyboard shortcut (default `Alt+E`) in addition to the popup buttons.
+
 Originally made to help me quickly see raw Japanese lines while watching anime, without needing to record and upload files manually.
 
 ---
 
 ## How it works
 
-1. The extension uses `chrome.tabCapture` to record tab audio.
-2. When the user clicks **"Stop Recording"**, the recorded audio is sent to a local Python script via Native Messaging.
-3. The Python script uses **PyAV** to decode the WebM audio stream and resample it into a 16kHz mono numpy array.
-4. The audio array is passed into the Whisper model for transcription.
-5. The transcribed text is returned and displayed in the popup UI.
+1. The background service worker ensures an offscreen document (`offscreen.html`) is running to handle MediaRecorder APIs.
+2. Recording can be started from the popup or via the `toggle-recording` command (default shortcut `Alt+E`).
+3. The offscreen page captures tab audio with `chrome.tabCapture`, packages it as base64 WebM, and relays it to the background script.
+4. The background script forwards the audio chunk to the native Python host through Chrome Native Messaging.
+5. The Python script decodes the WebM with **PyAV**, converts it to a 16 kHz mono numpy array, and runs Whisper for transcription.
+6. The transcribed text (and any save-to-disk status) is returned and displayed in the popup log.
 
 ---
 
@@ -76,11 +79,14 @@ Then **edit the following fields in the JSON file**:
 
 ## Usage
 
-1. Click the extension icon to open the popup.
-2. Click **Start Recording** to capture tab audio.
-3. The tab will continue to play sound normally.
-4. Click **Stop Recording** to send the audio for transcription.
-5. The result will be shown in the popup log panel.
+- Click the extension icon to open the popup (if the suggested shortcut `Ctrl+Shift+Y` / `Command+Shift+Y` is still set, that works too).
+- Press **Start Recording** to capture tab audio; playback continues through your speakers or headphones.
+- Press **Stop Recording** to send the audio for transcription and see the transcript in the log.
+
+### Keyboard Shortcuts
+
+- By default, press Alt+E (or Option⌥+E on macOS) to start or stop recording — no need to open the popup.
+- You can reassign the shortcut for “Start or stop Whisper recording” at `chrome://extensions/shortcuts`, and also choose whether it works globally across the system.
 
 ---
 
@@ -96,12 +102,21 @@ Then **edit the following fields in the JSON file**:
 
 ```
 .
-├── popup.html                  # Extension popup UI
-├── popup.js                    # JavaScript logic
-├── manifest.json               # Chrome extension manifest
-├── whisper_host.py             # Native Python host
-├── whisper_host.command        # Shell launcher for the host
-├── com.example.whisper_test.example.json   # Sample native messaging config
+├── manifest.json                                 # Chrome extension manifest
+├── background.js                                 # Service worker orchestrating capture flow
+├── offscreen.html                                # Offscreen document bootstrapping MediaRecorder
+├── offscreen.js                                  # Offscreen recording + audio forwarding logic
+├── popup.html                                    # Popup UI
+├── popup.js                                      # Popup controller and log rendering
+├── icons/
+│   └── microphone-black-shape.png                # Toolbar icon
+├── whisper_host.py                               # Native Python host
+├── whisper_host_utils.py                         # Audio conversion + transcription helpers
+├── tests/
+│   └── test_whisper_host_utils.py                # Unit tests for host utilities
+├── recordings/                                   # Runtime output (audio + transcript bundles)
+├── whisper_host.command                          # Shell launcher for the host
+├── com.example.chrome_whisper_transcriber.json   # Sample native messaging config
 ├── requirements.txt
 └── README.md
 ```

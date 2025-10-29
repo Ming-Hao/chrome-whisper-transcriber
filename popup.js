@@ -1,33 +1,37 @@
-let currentStream = null;
-let mediaRecorder = null;
 let logElement = null;
-let chunks = [];
-let currentTabTitle = null;
-
 let startButton = null;
 let stopButton = null;
 
-const TOGGLE_HOTKEY_KEY = "r"; // Use Ctrl + R to switch
+const TOGGLE_HOTKEY_KEY = "e"; // Use Alt/Option + E to switch
 
 let bgPort = null;
 let hostReadyReceived = false;
-
+let recordingActive = false;
+let lastRecordingStatus = "idle";
 
 function lockUI() {
   startButton.disabled = true;
   stopButton.disabled = true;
 }
+
 function enableStart() {
   startButton.disabled = false;
   stopButton.disabled = true;
+  recordingActive = false;
+}
+
+function enableStop() {
+  startButton.disabled = true;
+  stopButton.disabled = false;
+  recordingActive = true;
 }
 
 function connectBackground() {
   bgPort = chrome.runtime.connect({ name: "popup-bridge" });
-  
+
   setTimeout(() => {
-    if (hostReadyReceived == false) {
-      bgPort.postMessage({ type: "ensure-native" });
+    if (!hostReadyReceived) {
+      bgPort?.postMessage({ type: "ensure-native" });
     }
   }, 100);
 
@@ -36,8 +40,8 @@ function connectBackground() {
 
     switch (msg.type) {
       case "host-ready":
-        enableStart();
         hostReadyReceived = true;
+        applyRecordingStatus(lastRecordingStatus);
         log(msg.text || "host ready");
         break;
 
@@ -46,26 +50,50 @@ function connectBackground() {
         logResult(msg.text || "");
         break;
 
+      case "recording-status":
+        applyRecordingStatus(msg.status);
+        break;
+
+      case "recording-stopped":
+        enableStart();
+        log("Recording finished.");
+        break;
+
       case "error":
         enableStart();
         logError(msg.text || "");
+        break;
 
-        if (currentStream) {
-          currentStream.getTracks().forEach(t => t.stop());
-          currentStream = null;
+      case "warn":
+        logWarning(msg.text || "");
+        if ((msg.text || "").includes("Recording already in progress")) {
+          enableStop();
         }
         break;
 
+      case "recording-started":
+        enableStop();
+        log(msg.text || "Recording started.");
+        break;
+
       case "status":
+        if ((msg.text || "") === "Recording started. Use stop to finish.") {
+          enableStop();
+          break;
+        }
+        log(msg.text || "");
+        break;
+
       default:
         log(msg.text || "");
     }
   });
 
-
   bgPort.onDisconnect.addListener(() => {
     logWarning("Background port disconnected");
     bgPort = null;
+    recordingActive = false;
+    lockUI();
   });
 }
 
@@ -80,27 +108,15 @@ function ensureBgPort() {
   }
 }
 
-function sendAudioToBackground(base64Audio, tabTitle) {
-  if (!ensureBgPort()) {
-    logError("No background port available");
-    return;
-  }
-  try {
-    bgPort.postMessage({ type: "audio", base64: base64Audio, tabTitle: tabTitle || null });
-  } catch (e) {
-    logError("Send to background failed: " + (e?.message || e));
-  }
-}
-
 document.addEventListener("DOMContentLoaded", () => {
   connectBackground();
 
-  document.getElementById('closePopup').addEventListener('click', () => {
+  document.getElementById("closePopup").addEventListener("click", () => {
     window.close();
   });
 
-  document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') {
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
       window.close();
       return;
     }
@@ -120,101 +136,61 @@ document.addEventListener("DOMContentLoaded", () => {
   stopButton.addEventListener("click", stopRecordingFlow);
 });
 
-function resolveActiveTabTitle(callback) {
-  try {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (chrome.runtime.lastError) {
-        logWarning("Cannot read tab title: " + chrome.runtime.lastError.message);
-        callback(null);
-        return;
-      }
-      const title = tabs && tabs.length ? tabs[0].title || null : null;
-      callback(title);
-    });
-  } catch (e) {
-    logWarning("Cannot query tab title: " + (e?.message || e));
-    callback(null);
-  }
-}
-
 function startRecordingFlow() {
   if (startButton.disabled) return;
+  if (!ensureBgPort()) return;
 
-  // Stop existing stream if any
-  if (currentStream) {
-    currentStream.getTracks().forEach(track => track.stop());
-    currentStream = null;
+  lockUI();
+
+  try {
+    bgPort.postMessage({ type: "start-recording" });
+  } catch (e) {
+    enableStart();
+    logError("Send to background failed: " + (e?.message || e));
   }
-
-  resolveActiveTabTitle((title) => {
-    currentTabTitle = title;
-
-    chrome.tabCapture.capture({ audio: true, video: false }, (stream) => {
-      if (chrome.runtime.lastError || !stream) {
-        logError("Failed to capture: " + (chrome.runtime.lastError?.message || "No audio stream"));
-        return;
-      }
-
-      currentStream = stream;
-
-      // Keep tab audio audible
-      const audio = new Audio();
-      audio.srcObject = stream;
-      audio.play().catch(err => {
-        logWarning("Audio playback failed: " + err.message);
-      });
-
-      const options = { mimeType: "audio/webm;codecs=opus" };
-      mediaRecorder = new MediaRecorder(stream, options);
-      chunks = [];
-
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) {
-          chunks.push(e.data);
-        }
-      };
-
-      mediaRecorder.onstop = () => {
-        log("Processing and sending audio...");
-        const completeBlob = new Blob(chunks, { type: options.mimeType });
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          const base64Audio = reader.result.split(',')[1];
-          sendAudioToBackground(base64Audio, currentTabTitle); // << send to background
-        };
-        reader.readAsDataURL(completeBlob);
-      };
-
-      mediaRecorder.start();
-      log("Recording started. Click 'Stop Recording' to send audio.");
-
-      startButton.disabled = true;
-      stopButton.disabled = true;
-
-      setTimeout(() => { stopButton.disabled = false; }, 150);
-    });
-  });
 }
 
 function stopRecordingFlow() {
-  if (!mediaRecorder || mediaRecorder.state === "inactive") return;
-  log("Stopping recording. Please wait...");
+  if (!recordingActive && stopButton.disabled) return;
+  if (!ensureBgPort()) return;
+
   stopButton.disabled = true;
-  mediaRecorder.stop();
+
+  try {
+    bgPort.postMessage({ type: "stop-recording" });
+  } catch (e) {
+    logError("Stop command failed: " + (e?.message || e));
+  }
 }
 
 function isToggleHotkey(event) {
-  const modifierPressed = event.ctrlKey || event.metaKey;
-  return modifierPressed && !event.altKey && event.key.toLowerCase() === TOGGLE_HOTKEY_KEY;
+  return event.altKey && !event.ctrlKey && !event.metaKey && event.key.toLowerCase() === TOGGLE_HOTKEY_KEY;
 }
 
 function handleToggleHotkey() {
-  if (mediaRecorder && mediaRecorder.state === "recording") {
+  if (recordingActive) {
     stopRecordingFlow();
   } else if (!startButton.disabled) {
     startRecordingFlow();
   } else {
     logWarning("Hotkey ignored: recorder busy.");
+  }
+}
+
+function applyRecordingStatus(status) {
+  const normalized = status || "idle";
+  lastRecordingStatus = normalized;
+
+  if (normalized === "recording") {
+    enableStop();
+  } else if (normalized === "starting") {
+    lockUI();
+    recordingActive = false;
+  } else if (hostReadyReceived) {
+    enableStart();
+  } else {
+    lockUI();
+    recordingActive = false;
   }
 }
 
