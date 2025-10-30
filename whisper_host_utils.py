@@ -110,6 +110,35 @@ def open_recordings_folder(output_dir="recordings"):
     return folder_str
 
 
+def open_specific_folder(folder_path):
+    """
+    Open a specific folder path in the user's file explorer. Returns the folder path.
+    """
+    if not folder_path:
+        raise ValueError("Folder path is required.")
+
+    folder = Path(folder_path)
+    if folder.is_file():
+        folder = folder.parent
+    if not folder.exists():
+        raise FileNotFoundError(f"Folder does not exist: {folder}")
+
+    folder_str = str(folder)
+    system = platform.system()
+
+    try:
+        if system == "Windows":
+            os.startfile(folder_str)  # type: ignore[attr-defined]
+        elif system == "Darwin":
+            subprocess.Popen(["open", folder_str])
+        else:
+            subprocess.Popen(["xdg-open", folder_str])
+    except Exception as exc:
+        raise RuntimeError(f"Unable to open folder: {exc}") from exc
+
+    return folder_str
+
+
 def transcribe_audio_chunk(audio_chunk_b64, model, save_to_disk=False, output_dir="recordings", tab_title=None):
     """
     Decode a base64-encoded WebM chunk, optionally save it, convert to wav array,

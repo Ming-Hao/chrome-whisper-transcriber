@@ -1,9 +1,10 @@
 import sys
 import struct
 import json
+import base64
 import whisper
 
-from whisper_host_utils import transcribe_audio_chunk, open_recordings_folder
+from whisper_host_utils import transcribe_audio_chunk, open_recordings_folder, open_specific_folder
 
 # Load Whisper model (use "base" for a good balance of speed and accuracy)
 model = whisper.load_model("base")
@@ -42,6 +43,45 @@ while True:
             send_message({ "type": "error", "text": error_text })
         continue
 
+    if msg.get("command") == "open-folder":
+        folder_path = msg.get("path")
+        try:
+            opened = open_specific_folder(folder_path)
+            send_message({ "type": "status", "text": f"Opened saved folder: {opened}" })
+            print(f"Opened saved folder at {opened}", file=sys.stderr)
+        except Exception as e:
+            error_text = f"Failed to open saved folder: {str(e)}"
+            print(error_text, file=sys.stderr)
+            send_message({ "type": "error", "text": error_text })
+        continue
+
+    if msg.get("command") == "load-audio-file":
+        request_id = msg.get("requestId")
+        audio_path = msg.get("path")
+        try:
+            if not audio_path:
+                raise ValueError("Missing audio file path.")
+            with open(audio_path, "rb") as audio_file:
+                audio_bytes = audio_file.read()
+            encoded_audio = base64.b64encode(audio_bytes).decode("ascii")
+            send_message({
+                "type": "audio-file",
+                "requestId": request_id,
+                "path": audio_path,
+                "mimeType": msg.get("mimeType", "audio/webm"),
+                "base64": encoded_audio,
+            })
+        except Exception as e:
+            error_text = f"Unable to load audio file: {str(e)}"
+            print(error_text, file=sys.stderr)
+            send_message({
+                "type": "audio-file-error",
+                "requestId": request_id,
+                "path": audio_path,
+                "text": error_text,
+            })
+        continue
+
     if "audioChunk" in msg:
         try:
             print("Received audio chunk", file=sys.stderr)
@@ -65,10 +105,13 @@ while True:
                     print("Transcript file:", text_path, file=sys.stderr)
 
             # Send result back to extension
-            send_message({ "type": "result", "text": text })
+            result_payload = { "type": "result", "text": text }
             if saved_paths:
                 folder = saved_paths.get("folder") or saved_paths.get("audio")
+                result_payload["savedPaths"] = saved_paths
                 send_message({ "type": "status", "text": f"Saved audio & transcript to {folder}" })
+
+            send_message(result_payload)
 
         except Exception as e:
             print("Error:", str(e), file=sys.stderr)

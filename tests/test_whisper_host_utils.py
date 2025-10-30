@@ -2,6 +2,7 @@ import base64
 import os
 import tempfile
 import unittest
+import uuid
 from unittest import mock
 
 import numpy as np
@@ -86,6 +87,24 @@ class WhisperHostUtilsTest(unittest.TestCase):
 
         popen_mock.assert_called_once_with(["xdg-open", tmpdir])
         self.assertEqual(folder, tmpdir)
+
+    def test_open_specific_folder_mac(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            subdir = os.path.join(tmpdir, "saved")
+            os.mkdir(subdir)
+            with mock.patch("whisper_host_utils.platform.system", return_value="Darwin"), \
+                 mock.patch("whisper_host_utils.subprocess.Popen") as popen_mock:
+                folder = utils.open_specific_folder(subdir)
+
+        popen_mock.assert_called_once_with(["open", subdir])
+        self.assertEqual(folder, subdir)
+
+    def test_open_specific_folder_missing(self):
+        missing_path = os.path.join(tempfile.gettempdir(), "missing-" + uuid.uuid4().hex)
+        if os.path.exists(missing_path):
+            self.fail("Generated missing path unexpectedly exists.")
+        with self.assertRaises(FileNotFoundError):
+            utils.open_specific_folder(missing_path)
 
 
 if __name__ == "__main__":

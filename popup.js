@@ -4,6 +4,8 @@ let stopButton = null;
 let openFolderButton = null;
 
 const TOGGLE_HOTKEY_KEY = "e"; // Use Alt/Option + E to switch
+const pendingAudioRequests = new Map();
+const cachedAudioByPath = new Map();
 
 let bgPort = null;
 let hostReadyReceived = false;
@@ -48,7 +50,19 @@ function connectBackground() {
 
       case "result":
         enableStart();
-        logResult(msg.text || "");
+        logResult(msg.text || "", {
+          audioDataUrl: msg.audioDataUrl || null,
+          savedPaths: msg.savedPaths || null,
+          tabTitle: msg.tabTitle || null,
+        });
+        break;
+      
+      case "audio-file":
+        handleIncomingAudioFile(msg);
+        break;
+
+      case "audio-file-error":
+        handleIncomingAudioFileError(msg);
         break;
 
       case "recording-status":
@@ -179,6 +193,21 @@ function openRecordingsFolder() {
   }
 }
 
+function openSavedFolder(folderPath) {
+  if (!folderPath) {
+    logWarning("No valid folder path found to open.");
+    return;
+  }
+  if (!ensureBgPort()) return;
+
+  try {
+    bgPort.postMessage({ type: "open-saved-folder", folderPath });
+    log(`Attempting to open folder: ${folderPath}`);
+  } catch (e) {
+    logError("Failed to send command to open the specified folder: " + (e?.message || e));
+  }
+}
+
 function isToggleHotkey(event) {
   return event.altKey && !event.ctrlKey && !event.metaKey && event.key.toLowerCase() === TOGGLE_HOTKEY_KEY;
 }
@@ -214,9 +243,9 @@ function applyRecordingStatus(status) {
 function log(text) { appendLogLine(text, "log"); }
 function logWarning(text) { appendLogLine(text, "warn"); }
 function logError(text) { appendLogLine(text, "error"); }
-function logResult(text) { appendLogLine(text, "result"); }
+function logResult(text, extraInfo) { appendLogLine(text, "result", extraInfo || {}); }
 
-function appendLogLine(text, type) {
+function appendLogLine(text, type, extraInfo = {}) {
   const displayType = (type === "result" || type === "error" || type === "warn" || type === "log") ? type : "log";
   const now = new Date();
   const hh = String(now.getHours()).padStart(2, '0');
@@ -233,9 +262,143 @@ function appendLogLine(text, type) {
   line.appendChild(span);
 
   if (displayType === "result") {
+    const audioDataUrl = extraInfo?.audioDataUrl || null;
+    const savedPaths = extraInfo?.savedPaths || null;
+    const audioPath = savedPaths?.audio || null;
+
+    if (audioDataUrl || audioPath) {
+      const replayBtn = document.createElement("button");
+      replayBtn.className = "play-icon-btn";
+      replayBtn.innerHTML = "▶️";
+      replayBtn.title = "Replay";
+
+      if (audioPath) {
+        replayBtn.dataset.audioPath = audioPath;
+      }
+      if (savedPaths?.folder) {
+        replayBtn.dataset.folderPath = savedPaths.folder;
+      }
+      if (savedPaths?.text) {
+        replayBtn.dataset.transcriptPath = savedPaths.text;
+      }
+      if (extraInfo?.tabTitle) {
+        replayBtn.dataset.tabTitle = extraInfo.tabTitle;
+      }
+
+      let resolvedDataUrl = audioDataUrl || (audioPath ? cachedAudioByPath.get(audioPath) || null : null);
+      let audioInstance = null;
+      let isFetching = false;
+
+      const ensureAudioInstance = () => {
+        if (!resolvedDataUrl) {
+          return null;
+        }
+        if (!audioInstance) {
+          audioInstance = new Audio(resolvedDataUrl);
+          audioInstance.addEventListener("ended", () => {
+            replayBtn.innerHTML = "▶️";
+          });
+          audioInstance.addEventListener("pause", () => {
+            if (!audioInstance) return;
+            if (audioInstance.currentTime === 0 || audioInstance.currentTime < audioInstance.duration) {
+              replayBtn.innerHTML = "▶️";
+            }
+          });
+        }
+        return audioInstance;
+      };
+
+      const playOrToggle = async () => {
+        const instance = ensureAudioInstance();
+        if (!instance) {
+          return;
+        }
+        try {
+          if (!instance.paused && !instance.ended) {
+            instance.pause();
+            instance.currentTime = 0;
+            replayBtn.innerHTML = "▶️";
+            return;
+          }
+
+          instance.currentTime = 0;
+          replayBtn.innerHTML = "🔊";
+          await instance.play();
+        } catch (err) {
+          console.error("Audio playback failed:", err);
+          replayBtn.innerHTML = "⚠️";
+          setTimeout(() => { replayBtn.innerHTML = "▶️"; }, 1200);
+        }
+      };
+
+      replayBtn.addEventListener("click", () => {
+        if (resolvedDataUrl) {
+          playOrToggle();
+          return;
+        }
+
+        if (!audioPath) {
+          console.warn("No playable audio path found.");
+          return;
+        }
+
+        const cached = cachedAudioByPath.get(audioPath);
+        if (cached) {
+          resolvedDataUrl = cached;
+          audioInstance = null;
+          playOrToggle();
+          return;
+        }
+
+        if (isFetching) {
+          return;
+        }
+
+        isFetching = true;
+        replayBtn.disabled = true;
+        replayBtn.innerHTML = "⏳";
+
+        requestAudioFromHost(audioPath, extraInfo?.tabTitle || null,
+          (dataUrl) => {
+            isFetching = false;
+            replayBtn.disabled = false;
+            replayBtn.innerHTML = "▶️";
+
+            if (audioPath) {
+              cachedAudioByPath.set(audioPath, dataUrl);
+            }
+            resolvedDataUrl = dataUrl;
+            audioInstance = null;
+            playOrToggle();
+          },
+          (errorText) => {
+            isFetching = false;
+            replayBtn.disabled = false;
+            replayBtn.innerHTML = "⚠️";
+            if (errorText) {
+              logError(errorText);
+            }
+            setTimeout(() => { replayBtn.innerHTML = "▶️"; }, 1500);
+          });
+      });
+
+      line.appendChild(replayBtn);
+    }
+    if (savedPaths?.folder) {
+      const openFolderBtn = document.createElement("button");
+      openFolderBtn.className = "folder-icon-btn";
+      openFolderBtn.innerHTML = "📂";
+      openFolderBtn.title = "Open Folder";
+      openFolderBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        openSavedFolder(savedPaths.folder);
+      });
+      line.appendChild(openFolderBtn);
+    }
     const copyBtn = document.createElement("button");
     copyBtn.className = "copy-icon-btn";
     copyBtn.innerHTML = "📋";
+    copyBtn.title = "Copy";
     copyBtn.addEventListener("click", async () => {
       try {
         await navigator.clipboard.writeText(text); // copy without timestamp
@@ -249,4 +412,75 @@ function appendLogLine(text, type) {
   }
 
   logElement.prepend(line);
+}
+
+function requestAudioFromHost(audioPath, tabTitle, onSuccess, onFailure) {
+  if (!audioPath) {
+    onFailure?.("Missing audio file path, unable to play.");
+    return;
+  }
+  if (!ensureBgPort()) {
+    onFailure?.("Failed to connect to background page to retrieve audio.");
+    return;
+  }
+
+  const requestId = `audio-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  pendingAudioRequests.set(requestId, {
+    audioPath,
+    onSuccess,
+    onFailure,
+  });
+
+  try {
+    bgPort.postMessage({
+      type: "request-audio-playback",
+      requestId,
+      audioPath,
+      tabTitle: tabTitle || null,
+    });
+  } catch (err) {
+    pendingAudioRequests.delete(requestId);
+    onFailure?.("Failed to request background audio loading: " + (err?.message || err));
+  }
+}
+
+function handleIncomingAudioFile(msg) {
+  const requestId = msg?.requestId || null;
+  if (!requestId) {
+    console.warn("Received an audio-file message without a requestId.");
+    return;
+  }
+  const pending = pendingAudioRequests.get(requestId);
+  if (!pending) {
+    console.warn("Cannot find the corresponding audio request, requestId=", requestId);
+    return;
+  }
+  pendingAudioRequests.delete(requestId);
+
+  const base64 = msg?.base64;
+  if (!base64) {
+    pending.onFailure?.("The returned audio data is missing content.");
+    return;
+  }
+  const mimeType = msg?.mimeType || "audio/webm";
+  const dataUrl = `data:${mimeType};base64,${base64}`;
+  if (pending.audioPath) {
+    cachedAudioByPath.set(pending.audioPath, dataUrl);
+  }
+  pending.onSuccess?.(dataUrl);
+}
+
+function handleIncomingAudioFileError(msg) {
+  const requestId = msg?.requestId || null;
+  if (!requestId) {
+    logError(msg?.text || "An unknown error occurred while reading the audio file.");
+    return;
+  }
+  const pending = pendingAudioRequests.get(requestId);
+  if (!pending) {
+    logError(msg?.text || "An unknown error occurred while reading the audio file.");
+    return;
+  }
+  pendingAudioRequests.delete(requestId);
+  pending.onFailure?.(msg?.text || "Failed to read the audio file.");
 }

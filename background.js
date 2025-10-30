@@ -3,6 +3,7 @@ const OFFSCREEN_URL = "offscreen.html";
 let nativePort = null;
 let hostReady = false; // becomes true on first host message
 const popupPorts = new Set();
+const audioRequestMap = new Map();
 
 const BADGE = {
   idle: {
@@ -99,6 +100,25 @@ function ensureNativePort() {
   }
 
   nativePort.onMessage.addListener((msg) => {
+    if (msg?.type === "audio-file" || msg?.type === "audio-file-error") {
+      const requestId = msg?.requestId || null;
+      const pending = requestId ? audioRequestMap.get(requestId) : null;
+      if (pending?.port) {
+        try {
+          pending.port.postMessage(msg);
+        } catch (_) {
+          // ignore send failure
+        }
+      } else {
+        // fallback to broadcast if no pending listener found
+        broadcast(msg);
+      }
+      if (requestId) {
+        audioRequestMap.delete(requestId);
+      }
+      return;
+    }
+
     if (!hostReady) {
       hostReady = true;
       broadcast({ type: "host-ready", text: "native host is ready (first message seen)" });
@@ -109,7 +129,13 @@ function ensureNativePort() {
       }
     }
     if (msg?.type || msg?.text) {
-      broadcast({ type: msg.type || "status", text: msg.text ?? JSON.stringify(msg) });
+      const payload = { type: msg.type || "status", text: msg.text ?? JSON.stringify(msg) };
+      if (msg.type === "result") {
+        if (msg.savedPaths) {
+          payload.savedPaths = msg.savedPaths;
+        }
+      }
+      broadcast(payload);
     }
   });
 
@@ -193,6 +219,40 @@ function openRecordingsFolder() {
     broadcast({ type: "status", text: "Attempting to open recordings folder..." });
   } catch (err) {
     broadcast({ type: "error", text: "Failed to open recordings folder: " + (err?.message || err) });
+  }
+}
+
+function openSavedRecordingFolder(folderPath, port) {
+  const path = typeof folderPath === "string" ? folderPath.trim() : "";
+  const send = (message) => {
+    if (!message) return;
+    if (port) {
+      try {
+        port.postMessage(message);
+      } catch (_) {
+        // ignore send failures
+      }
+    } else {
+      broadcast(message);
+    }
+  };
+
+  if (!path) {
+    send({ type: "warn", text: "Missing folder path for saved recording." });
+    return;
+  }
+
+  const np = ensureNativePort();
+  if (!np) {
+    send({ type: "error", text: "Native host unavailable for opening saved folder." });
+    setBadge("error");
+    return;
+  }
+
+  try {
+    np.postMessage({ command: "open-folder", path });
+  } catch (err) {
+    send({ type: "error", text: "Failed to open saved folder: " + (err?.message || err) });
   }
 }
 
@@ -345,10 +405,50 @@ chrome.runtime.onConnect.addListener((port) => {
       openRecordingsFolder();
       return;
     }
+
+    if (msg.type === "open-saved-folder") {
+      openSavedRecordingFolder(msg.folderPath, port);
+      return;
+    }
+
+    if (msg.type === "request-audio-playback") {
+      const { requestId, audioPath } = msg;
+      if (typeof audioPath !== "string" || !audioPath) {
+        port.postMessage({ type: "error", text: "Invalid audio path for playback request." });
+        return;
+      }
+
+      const np = ensureNativePort();
+      if (!np) {
+        port.postMessage({ type: "error", text: "Native host unavailable for audio playback request." });
+        return;
+      }
+
+      const id = requestId || `audio-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      audioRequestMap.set(id, { port, audioPath });
+
+      try {
+        np.postMessage({
+          command: "load-audio-file",
+          requestId: id,
+          path: audioPath,
+          tabTitle: typeof msg.tabTitle === "string" ? msg.tabTitle : null,
+        });
+      } catch (err) {
+        audioRequestMap.delete(id);
+        port.postMessage({ type: "error", text: "Failed to request audio file: " + (err?.message || err) });
+      }
+      return;
+    }
   });
 
   port.onDisconnect.addListener(() => {
     popupPorts.delete(port);
+    for (const [requestId, info] of audioRequestMap.entries()) {
+      if (info.port === port) {
+        audioRequestMap.delete(requestId);
+      }
+    }
   });
 });
 

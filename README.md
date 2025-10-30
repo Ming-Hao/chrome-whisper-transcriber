@@ -1,7 +1,7 @@
 # chrome-whisper-transcriber
 
 Just a small personal experiment for playing with Chrome Extensions and native messaging.  
-This extension captures audio from a browser tab and sends it to a local Python script that runs OpenAI Whisper for transcription.
+This extension captures audio from a browser tab and sends it to a local Python script that runs OpenAI Whisper for transcription, then lets you instantly replay the captured audio or jump to the saved files from the popup log.
 
 You can now trigger recordings directly with a keyboard shortcut (default `Alt+E`) in addition to the popup buttons.
 
@@ -16,7 +16,7 @@ Originally made to help me quickly see raw Japanese lines while watching anime, 
 3. The offscreen page captures tab audio with `chrome.tabCapture`, packages it as base64 WebM, and relays it to the background script.
 4. The background script forwards the audio chunk to the native Python host through Chrome Native Messaging.
 5. The Python script decodes the WebM with **PyAV**, converts it to a 16 kHz mono numpy array, and runs Whisper for transcription.
-6. The transcribed text (and any save-to-disk status) is returned and displayed in the popup log.
+6. The transcribed text (and any save-to-disk status) is returned to the popup log, where you can replay the audio, open the saved folder, or copy the transcript snippet.
 
 ---
 
@@ -82,6 +82,10 @@ Then **edit the following fields in the JSON file**:
 - Click the extension icon to open the popup (if the suggested shortcut `Ctrl+Shift+Y` / `Command+Shift+Y` is still set, that works too).
 - Press **Start Recording** to capture tab audio; playback continues through your speakers or headphones.
 - Press **Stop Recording** to send the audio for transcription and see the transcript in the log.
+- Each result row provides quick actions:
+  - ▶️ Replay the recently recorded audio (plays directly in the browser)
+  - 📂 Open the output folder for this recording (contains audio.webm and transcript.txt)
+  - 📋 Copy the plain text transcription (without timestamps)
 
 ### Keyboard Shortcuts
 
