@@ -12,6 +12,93 @@ let hostReadyReceived = false;
 let recordingActive = false;
 let lastRecordingStatus = "idle";
 
+const replayMuteInfo = {
+  tabId: null,
+  shouldRestore: false,
+};
+
+let closingPopup = false;
+
+function queryActiveTab() {
+  return new Promise((resolve) => {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const err = chrome.runtime.lastError;
+      if (err) {
+        console.warn("queryActiveTab failed:", err);
+        resolve(null);
+        return;
+      }
+      resolve(Array.isArray(tabs) && tabs.length ? tabs[0] : null);
+    });
+  });
+}
+
+function updateTabMuted(tabId, muted) {
+  return new Promise((resolve) => {
+    chrome.tabs.update(tabId, { muted }, (tab) => {
+      const err = chrome.runtime.lastError;
+      if (err) {
+        console.warn("updateTabMuted failed:", err);
+        resolve(null);
+        return;
+      }
+      resolve(tab || null);
+    });
+  });
+}
+
+async function restoreReplayMute() {
+  const { tabId, shouldRestore } = replayMuteInfo;
+  replayMuteInfo.tabId = null;
+  replayMuteInfo.shouldRestore = false;
+  if (!shouldRestore || typeof tabId !== "number") {
+    return;
+  }
+  await updateTabMuted(tabId, false);
+}
+
+async function muteCurrentTabForReplay() {
+  const tab = await queryActiveTab();
+  if (!tab || typeof tab.id !== "number") {
+    return false;
+  }
+
+  if (replayMuteInfo.shouldRestore && replayMuteInfo.tabId !== tab.id) {
+    await restoreReplayMute();
+  }
+
+  const alreadyMuted = tab.mutedInfo?.muted === true;
+  replayMuteInfo.tabId = tab.id;
+  replayMuteInfo.shouldRestore = !alreadyMuted;
+
+  if (!alreadyMuted) {
+    const tabResult = await updateTabMuted(tab.id, true);
+    if (!tabResult) {
+      replayMuteInfo.shouldRestore = false;
+    }
+  } else {
+    replayMuteInfo.shouldRestore = false;
+  }
+
+  return replayMuteInfo.shouldRestore;
+}
+
+window.addEventListener("unload", () => {
+  void restoreReplayMute();
+});
+
+async function handlePopupClose() {
+  if (closingPopup) {
+    return;
+  }
+  closingPopup = true;
+  try {
+    await restoreReplayMute();
+  } finally {
+    window.close();
+  }
+}
+
 function lockUI() {
   startButton.disabled = true;
   stopButton.disabled = true;
@@ -126,13 +213,18 @@ function ensureBgPort() {
 document.addEventListener("DOMContentLoaded", () => {
   connectBackground();
 
-  document.getElementById("closePopup").addEventListener("click", () => {
-    window.close();
-  });
+  const closeBtn = document.getElementById("closePopup");
+  if (closeBtn) {
+    closeBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      handlePopupClose().catch((err) => console.error("Failed to close popup:", err));
+    });
+  }
 
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
-      window.close();
+      event.preventDefault();
+      handlePopupClose().catch((err) => console.error("Failed to close popup:", err));
       return;
     }
     if (isToggleHotkey(event)) {
@@ -297,11 +389,13 @@ function appendLogLine(text, type, extraInfo = {}) {
           audioInstance = new Audio(resolvedDataUrl);
           audioInstance.addEventListener("ended", () => {
             replayBtn.innerHTML = "▶️";
+            void restoreReplayMute(); // intentionally fire-and-forget: we only need to trigger mute restoration
           });
           audioInstance.addEventListener("pause", () => {
             if (!audioInstance) return;
             if (audioInstance.currentTime === 0 || audioInstance.currentTime < audioInstance.duration) {
               replayBtn.innerHTML = "▶️";
+              void restoreReplayMute(); // intentionally fire-and-forget: we only need to trigger mute restoration
             }
           });
         }
@@ -318,22 +412,25 @@ function appendLogLine(text, type, extraInfo = {}) {
             instance.pause();
             instance.currentTime = 0;
             replayBtn.innerHTML = "▶️";
+            await restoreReplayMute();
             return;
           }
 
+          await muteCurrentTabForReplay();
           instance.currentTime = 0;
           replayBtn.innerHTML = "🔊";
           await instance.play();
         } catch (err) {
           console.error("Audio playback failed:", err);
           replayBtn.innerHTML = "⚠️";
+          await restoreReplayMute();
           setTimeout(() => { replayBtn.innerHTML = "▶️"; }, 1200);
         }
       };
 
       replayBtn.addEventListener("click", () => {
         if (resolvedDataUrl) {
-          playOrToggle();
+          playOrToggle().catch((err) => console.error("Replay toggle failed:", err));
           return;
         }
 
@@ -346,7 +443,7 @@ function appendLogLine(text, type, extraInfo = {}) {
         if (cached) {
           resolvedDataUrl = cached;
           audioInstance = null;
-          playOrToggle();
+          playOrToggle().catch((err) => console.error("Replay toggle failed:", err));
           return;
         }
 
@@ -369,7 +466,7 @@ function appendLogLine(text, type, extraInfo = {}) {
             }
             resolvedDataUrl = dataUrl;
             audioInstance = null;
-            playOrToggle();
+            playOrToggle().catch((err) => console.error("Replay toggle failed:", err));
           },
           (errorText) => {
             isFetching = false;
