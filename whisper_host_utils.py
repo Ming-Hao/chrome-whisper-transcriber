@@ -94,20 +94,10 @@ def open_recordings_folder(output_dir="recordings"):
     Open the recordings folder in the user's file explorer. Returns the folder path.
     """
     folder_path = ensure_recordings_root(output_dir)
-    folder_str = str(folder_path)
-    system = platform.system()
-
     try:
-        if system == "Windows":
-            os.startfile(folder_str)  # type: ignore[attr-defined]
-        elif system == "Darwin":
-            subprocess.Popen(["open", folder_str])
-        else:
-            subprocess.Popen(["xdg-open", folder_str])
+        return open_specific_folder(folder_path)
     except Exception as exc:
         raise RuntimeError(f"Unable to open recordings folder: {exc}") from exc
-
-    return folder_str
 
 
 def open_specific_folder(folder_path):
