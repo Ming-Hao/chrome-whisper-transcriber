@@ -1,3 +1,5 @@
+import { MESSAGE_TYPES } from "./message-types.js";
+
 let logElement = null;
 let startButton = null;
 let stopButton = null;
@@ -121,7 +123,7 @@ function connectBackground() {
 
   setTimeout(() => {
     if (!hostReadyReceived) {
-      bgPort?.postMessage({ type: "ensure-native" });
+      bgPort?.postMessage({ type: MESSAGE_TYPES.ENSURE_NATIVE });
     }
   }, 100);
 
@@ -129,13 +131,13 @@ function connectBackground() {
     if (!msg) return;
 
     switch (msg.type) {
-      case "host-ready":
+      case MESSAGE_TYPES.HOST_READY:
         hostReadyReceived = true;
         applyRecordingStatus(lastRecordingStatus);
         log(msg.text || "host ready");
         break;
 
-      case "result":
+      case MESSAGE_TYPES.RESULT:
         enableStart();
         logResult(msg.text || "", {
           audioDataUrl: msg.audioDataUrl || null,
@@ -144,41 +146,41 @@ function connectBackground() {
         });
         break;
       
-      case "audio-file":
+      case MESSAGE_TYPES.AUDIO_FILE:
         handleIncomingAudioFile(msg);
         break;
 
-      case "audio-file-error":
+      case MESSAGE_TYPES.AUDIO_FILE_ERROR:
         handleIncomingAudioFileError(msg);
         break;
 
-      case "recording-status":
+      case MESSAGE_TYPES.RECORDING_STATUS:
         applyRecordingStatus(msg.status);
         break;
 
-      case "recording-stopped":
+      case MESSAGE_TYPES.RECORDING_STOPPED:
         enableStart();
         log("Recording finished.");
         break;
 
-      case "error":
+      case MESSAGE_TYPES.ERROR:
         enableStart();
         logError(msg.text || "");
         break;
 
-      case "warn":
+      case MESSAGE_TYPES.WARN:
         logWarning(msg.text || "");
         if ((msg.text || "").includes("Recording already in progress")) {
           enableStop();
         }
         break;
 
-      case "recording-started":
+      case MESSAGE_TYPES.RECORDING_STARTED:
         enableStop();
         log(msg.text || "Recording started.");
         break;
 
-      case "status":
+      case MESSAGE_TYPES.STATUS:
         if ((msg.text || "") === "Recording started. Use stop to finish.") {
           enableStop();
           break;
@@ -254,7 +256,7 @@ function startRecordingFlow() {
   lockUI();
 
   try {
-    bgPort.postMessage({ type: "start-recording" });
+    bgPort.postMessage({ type: MESSAGE_TYPES.START_RECORDING });
   } catch (e) {
     enableStart();
     logError("Send to background failed: " + (e?.message || e));
@@ -268,7 +270,7 @@ function stopRecordingFlow() {
   stopButton.disabled = true;
 
   try {
-    bgPort.postMessage({ type: "stop-recording" });
+    bgPort.postMessage({ type: MESSAGE_TYPES.STOP_RECORDING });
   } catch (e) {
     logError("Stop command failed: " + (e?.message || e));
   }
@@ -278,7 +280,7 @@ function openRecordingsFolder() {
   if (!ensureBgPort()) return;
 
   try {
-    bgPort.postMessage({ type: "open-recordings-folder" });
+    bgPort.postMessage({ type: MESSAGE_TYPES.OPEN_RECORDINGS_FOLDER });
     log("Requesting to open the recordings folder...");
   } catch (e) {
     logError("Failed to send the open folder command: " + (e?.message || e));
@@ -293,7 +295,7 @@ function openSavedFolder(folderPath) {
   if (!ensureBgPort()) return;
 
   try {
-    bgPort.postMessage({ type: "open-saved-folder", folderPath });
+    bgPort.postMessage({ type: MESSAGE_TYPES.OPEN_SAVED_FOLDER, folderPath });
     log(`Attempting to open folder: ${folderPath}`);
   } catch (e) {
     logError("Failed to send command to open the specified folder: " + (e?.message || e));
@@ -332,13 +334,19 @@ function applyRecordingStatus(status) {
 }
 
 // Logging helpers
-function log(text) { appendLogLine(text, "log"); }
-function logWarning(text) { appendLogLine(text, "warn"); }
-function logError(text) { appendLogLine(text, "error"); }
-function logResult(text, extraInfo) { appendLogLine(text, "result", extraInfo || {}); }
+function log(text) { appendLogLine(text, MESSAGE_TYPES.LOG); }
+function logWarning(text) { appendLogLine(text, MESSAGE_TYPES.WARN); }
+function logError(text) { appendLogLine(text, MESSAGE_TYPES.ERROR); }
+function logResult(text, extraInfo) { appendLogLine(text, MESSAGE_TYPES.RESULT, extraInfo || {}); }
 
 function appendLogLine(text, type, extraInfo = {}) {
-  const displayType = (type === "result" || type === "error" || type === "warn" || type === "log") ? type : "log";
+  const displayType =
+    (type === MESSAGE_TYPES.RESULT ||
+      type === MESSAGE_TYPES.ERROR ||
+      type === MESSAGE_TYPES.WARN ||
+      type === MESSAGE_TYPES.LOG)
+      ? type
+      : MESSAGE_TYPES.LOG;
   const now = new Date();
   const hh = String(now.getHours()).padStart(2, '0');
   const mm = String(now.getMinutes()).padStart(2, '0');
@@ -353,7 +361,7 @@ function appendLogLine(text, type, extraInfo = {}) {
   span.textContent = `[${timestamp}] ${text}`;
   line.appendChild(span);
 
-  if (displayType === "result") {
+  if (displayType === MESSAGE_TYPES.RESULT) {
     const audioDataUrl = extraInfo?.audioDataUrl || null;
     const savedPaths = extraInfo?.savedPaths || null;
     const audioPath = savedPaths?.audio || null;
@@ -530,7 +538,7 @@ function requestAudioFromHost(audioPath, tabTitle, onSuccess, onFailure) {
 
   try {
     bgPort.postMessage({
-      type: "request-audio-playback",
+      type: MESSAGE_TYPES.REQUEST_AUDIO_PLAYBACK,
       requestId,
       audioPath,
       tabTitle: tabTitle || null,

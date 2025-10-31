@@ -1,3 +1,5 @@
+import { MESSAGE_TYPES } from "./message-types.js";
+
 const RECORDING_MIME = "audio/webm;codecs=opus";
 
 let mediaRecorder = null;
@@ -44,13 +46,13 @@ function handleRecorderStop() {
   chunks = [];
 
   if (!blob.size) {
-    sendMessage({ type: "error", text: "No audio captured" });
-    sendMessage({ type: "recording-stopped" });
+    sendMessage({ type: MESSAGE_TYPES.ERROR, text: "No audio captured" });
+    sendMessage({ type: MESSAGE_TYPES.RECORDING_STOPPED });
     resetState();
     return;
   }
 
-  sendMessage({ type: "status", text: "Processing and sending audio..." });
+  sendMessage({ type: MESSAGE_TYPES.STATUS, text: "Processing and sending audio..." });
 
   const reader = new FileReader();
   reader.onloadend = () => {
@@ -60,21 +62,21 @@ function handleRecorderStop() {
       if (!base64) {
         throw new Error("Invalid audio data");
       }
-      sendMessage({ type: "audio", base64, tabTitle: capturedTitle || null });
+      sendMessage({ type: MESSAGE_TYPES.AUDIO, base64, tabTitle: capturedTitle || null });
     } catch (err) {
-      sendMessage({ type: "error", text: "Audio encoding failed: " + (err?.message || err) });
+      sendMessage({ type: MESSAGE_TYPES.ERROR, text: "Audio encoding failed: " + (err?.message || err) });
     } finally {
-      sendMessage({ type: "recording-stopped" });
+      sendMessage({ type: MESSAGE_TYPES.RECORDING_STOPPED });
       resetState();
     }
   };
 
   reader.onerror = () => {
     sendMessage({
-      type: "error",
+      type: MESSAGE_TYPES.ERROR,
       text: "Audio processing failed: " + (reader.error?.message || reader.error || "unknown"),
     });
-    sendMessage({ type: "recording-stopped" });
+    sendMessage({ type: MESSAGE_TYPES.RECORDING_STOPPED });
     resetState();
   };
 
@@ -83,7 +85,7 @@ function handleRecorderStop() {
 
 function startRecordingCommand(data) {
   if (mediaRecorder && mediaRecorder.state === "recording") {
-    sendMessage({ type: "warn", text: "Recording already in progress." });
+    sendMessage({ type: MESSAGE_TYPES.WARN, text: "Recording already in progress." });
     return;
   }
 
@@ -92,8 +94,8 @@ function startRecordingCommand(data) {
   currentStreamId = data?.streamId || null;
 
   if (!currentStreamId) {
-    sendMessage({ type: "error", text: "Missing stream identifier for tab capture." });
-    sendMessage({ type: "recording-stopped" });
+    sendMessage({ type: MESSAGE_TYPES.ERROR, text: "Missing stream identifier for tab capture." });
+    sendMessage({ type: MESSAGE_TYPES.RECORDING_STOPPED });
     resetState();
     return;
   }
@@ -122,8 +124,8 @@ function startRecordingCommand(data) {
       try {
         mediaRecorder = new MediaRecorder(stream, { mimeType: RECORDING_MIME });
       } catch (err) {
-        sendMessage({ type: "error", text: "Cannot create recorder: " + (err?.message || err) });
-        sendMessage({ type: "recording-stopped" });
+        sendMessage({ type: MESSAGE_TYPES.ERROR, text: "Cannot create recorder: " + (err?.message || err) });
+        sendMessage({ type: MESSAGE_TYPES.RECORDING_STOPPED });
         resetState();
         return;
       }
@@ -138,31 +140,31 @@ function startRecordingCommand(data) {
 
       mediaRecorder.onerror = (event) => {
         sendMessage({
-          type: "error",
+          type: MESSAGE_TYPES.ERROR,
           text: "Recording error: " + (event.error?.message || event.error || "unknown"),
         });
-        sendMessage({ type: "recording-stopped" });
+        sendMessage({ type: MESSAGE_TYPES.RECORDING_STOPPED });
         resetState();
       };
 
       try {
         mediaRecorder.start();
       } catch (err) {
-        sendMessage({ type: "error", text: "Recorder start failed: " + (err?.message || err) });
-        sendMessage({ type: "recording-stopped" });
+        sendMessage({ type: MESSAGE_TYPES.ERROR, text: "Recorder start failed: " + (err?.message || err) });
+        sendMessage({ type: MESSAGE_TYPES.RECORDING_STOPPED });
         resetState();
         return;
       }
 
-      sendMessage({ type: "status", text: "Recording started. Use stop to finish." });
-      sendMessage({ type: "recording-started" });
+      sendMessage({ type: MESSAGE_TYPES.STATUS, text: "Recording started. Use stop to finish." });
+      sendMessage({ type: MESSAGE_TYPES.RECORDING_STARTED });
     })
     .catch((err) => {
       sendMessage({
-        type: "error",
+        type: MESSAGE_TYPES.ERROR,
         text: "Failed to acquire tab audio: " + (err?.message || err),
       });
-      sendMessage({ type: "recording-stopped" });
+      sendMessage({ type: MESSAGE_TYPES.RECORDING_STOPPED });
       resetState();
     });
 }
@@ -172,8 +174,8 @@ function stopRecordingCommand() {
     try {
       mediaRecorder.stop();
     } catch (err) {
-      sendMessage({ type: "error", text: "Recorder stop failed: " + (err?.message || err) });
-      sendMessage({ type: "recording-stopped" });
+      sendMessage({ type: MESSAGE_TYPES.ERROR, text: "Recorder stop failed: " + (err?.message || err) });
+      sendMessage({ type: MESSAGE_TYPES.RECORDING_STOPPED });
       resetState();
     }
     return;
@@ -181,30 +183,30 @@ function stopRecordingCommand() {
 
   if (currentStream) {
     stopStream();
-    sendMessage({ type: "recording-stopped" });
+    sendMessage({ type: MESSAGE_TYPES.RECORDING_STOPPED });
     resetState();
     return;
   }
 
-  sendMessage({ type: "warn", text: "No active recording to stop." });
-  sendMessage({ type: "recording-stopped" });
+  sendMessage({ type: MESSAGE_TYPES.WARN, text: "No active recording to stop." });
+  sendMessage({ type: MESSAGE_TYPES.RECORDING_STOPPED });
 }
 
 chrome.runtime.onMessage.addListener((msg) => {
   if (!msg || msg.target !== "offscreen") return;
 
-  if (msg.type === "start-recording") {
+  if (msg.type === MESSAGE_TYPES.START_RECORDING) {
     startRecordingCommand(msg);
-  } else if (msg.type === "stop-recording") {
+  } else if (msg.type === MESSAGE_TYPES.STOP_RECORDING) {
     stopRecordingCommand();
-  } else if (msg.type === "ping") {
-    sendMessage({ type: "offscreen-ready" });
+  } else if (msg.type === MESSAGE_TYPES.PING) {
+    sendMessage({ type: MESSAGE_TYPES.OFFSCREEN_READY });
   }
 });
 
 window.addEventListener("unload", () => {
   resetState();
-  sendMessage({ type: "offscreen-closed" });
+  sendMessage({ type: MESSAGE_TYPES.OFFSCREEN_CLOSED });
 });
 
-sendMessage({ type: "offscreen-ready" });
+sendMessage({ type: MESSAGE_TYPES.OFFSCREEN_READY });

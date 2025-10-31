@@ -1,3 +1,5 @@
+import { MESSAGE_TYPES } from "./message-types.js";
+
 const OFFSCREEN_URL = "offscreen.html";
 
 let nativePort = null;
@@ -64,7 +66,7 @@ function broadcast(msg) {
 
 function buildRecordingStatusMessage() {
   return {
-    type: "recording-status",
+    type: MESSAGE_TYPES.RECORDING_STATUS,
     status: recordingState.status,
     tabId: recordingState.tabId,
     tabTitle: recordingState.tabTitle,
@@ -94,13 +96,13 @@ function ensureNativePort() {
     }
   } catch (err) {
     nativePort = null;
-    broadcast({ type: "error", text: "Failed to connect native host: " + (err?.message || err) });
+    broadcast({ type: MESSAGE_TYPES.ERROR, text: "Failed to connect native host: " + (err?.message || err) });
     setBadge("error");
     return null;
   }
 
   nativePort.onMessage.addListener((msg) => {
-    if (msg?.type === "audio-file" || msg?.type === "audio-file-error") {
+    if (msg?.type === MESSAGE_TYPES.AUDIO_FILE || msg?.type === MESSAGE_TYPES.AUDIO_FILE_ERROR) {
       const requestId = msg?.requestId || null;
       const pending = requestId ? audioRequestMap.get(requestId) : null;
       if (pending?.port) {
@@ -121,7 +123,7 @@ function ensureNativePort() {
 
     if (!hostReady) {
       hostReady = true;
-      broadcast({ type: "host-ready", text: "native host is ready (first message seen)" });
+      broadcast({ type: MESSAGE_TYPES.HOST_READY, text: "native host is ready (first message seen)" });
       if (recordingState.status === "recording") {
         setBadge("recording");
       } else {
@@ -129,8 +131,8 @@ function ensureNativePort() {
       }
     }
     if (msg?.type || msg?.text) {
-      const payload = { type: msg.type || "status", text: msg.text ?? JSON.stringify(msg) };
-      if (msg.type === "result") {
+      const payload = { type: msg.type || MESSAGE_TYPES.STATUS, text: msg.text ?? JSON.stringify(msg) };
+      if (msg.type === MESSAGE_TYPES.RESULT) {
         if (msg.savedPaths) {
           payload.savedPaths = msg.savedPaths;
         }
@@ -140,11 +142,11 @@ function ensureNativePort() {
   });
 
   nativePort.onDisconnect.addListener(() => {
-    broadcast({ type: "error", text: "Native host disconnected" });
+    broadcast({ type: MESSAGE_TYPES.ERROR, text: "Native host disconnected" });
     nativePort = null;
     hostReady = false;
     if (recordingState.status === "recording" || recordingState.status === "starting") {
-      broadcast({ type: "warn", text: "Recording continued without native host connection." });
+      broadcast({ type: MESSAGE_TYPES.WARN, text: "Recording continued without native host connection." });
     }
     setBadge("idle");
   });
@@ -175,7 +177,7 @@ async function ensureOffscreenDocument() {
     // Document already exists from a previous session; assume it is ready to receive messages.
     offscreenReady = true;
     chrome.runtime
-      .sendMessage({ source: "background", target: "offscreen", type: "ping" })
+      .sendMessage({ source: "background", target: "offscreen", type: MESSAGE_TYPES.PING })
       .catch(() => {
         // If the offscreen page is not actually ready, wait for it to notify again.
         offscreenReady = false;
@@ -195,30 +197,30 @@ function waitForOffscreenReady() {
 async function forwardAudioToNative(base64Audio, tabTitle) {
   const np = ensureNativePort();
   if (!np) {
-    broadcast({ type: "error", text: "Cannot forward audio: native host unavailable" });
+    broadcast({ type: MESSAGE_TYPES.ERROR, text: "Cannot forward audio: native host unavailable" });
     setBadge("error");
     return;
   }
   try {
     np.postMessage({ audioChunk: base64Audio, tabTitle: tabTitle || null });
-    broadcast({ type: "status", text: "Audio forwarded to native host" });
+    broadcast({ type: MESSAGE_TYPES.STATUS, text: "Audio forwarded to native host" });
   } catch (err) {
-    broadcast({ type: "error", text: "Forwarding failed: " + (err?.message || err) });
+    broadcast({ type: MESSAGE_TYPES.ERROR, text: "Forwarding failed: " + (err?.message || err) });
   }
 }
 
 function openRecordingsFolder() {
   const np = ensureNativePort();
   if (!np) {
-    broadcast({ type: "error", text: "Cannot open recordings folder: native host is not running." });
+    broadcast({ type: MESSAGE_TYPES.ERROR, text: "Cannot open recordings folder: native host is not running." });
     setBadge("error");
     return;
   }
   try {
     np.postMessage({ command: "open-recordings-folder" });
-    broadcast({ type: "status", text: "Attempting to open recordings folder..." });
+    broadcast({ type: MESSAGE_TYPES.STATUS, text: "Attempting to open recordings folder..." });
   } catch (err) {
-    broadcast({ type: "error", text: "Failed to open recordings folder: " + (err?.message || err) });
+    broadcast({ type: MESSAGE_TYPES.ERROR, text: "Failed to open recordings folder: " + (err?.message || err) });
   }
 }
 
@@ -238,13 +240,13 @@ function openSavedRecordingFolder(folderPath, port) {
   };
 
   if (!path) {
-    send({ type: "warn", text: "Missing folder path for saved recording." });
+    send({ type: MESSAGE_TYPES.WARN, text: "Missing folder path for saved recording." });
     return;
   }
 
   const np = ensureNativePort();
   if (!np) {
-    send({ type: "error", text: "Native host unavailable for opening saved folder." });
+    send({ type: MESSAGE_TYPES.ERROR, text: "Native host unavailable for opening saved folder." });
     setBadge("error");
     return;
   }
@@ -252,13 +254,13 @@ function openSavedRecordingFolder(folderPath, port) {
   try {
     np.postMessage({ command: "open-folder", path });
   } catch (err) {
-    send({ type: "error", text: "Failed to open saved folder: " + (err?.message || err) });
+    send({ type: MESSAGE_TYPES.ERROR, text: "Failed to open saved folder: " + (err?.message || err) });
   }
 }
 
 async function startRecordingFlow() {
   if (recordingState.status !== "idle") {
-    broadcast({ type: "warn", text: "Recording already in progress." });
+    broadcast({ type: MESSAGE_TYPES.WARN, text: "Recording already in progress." });
     return;
   }
 
@@ -271,7 +273,7 @@ async function startRecordingFlow() {
     setBadge("connecting");
   }
 
-  broadcast({ type: "status", text: "Preparing to record current tab audio..." });
+  broadcast({ type: MESSAGE_TYPES.STATUS, text: "Preparing to record current tab audio..." });
 
   let activeTab = null;
   try {
@@ -308,7 +310,7 @@ async function startRecordingFlow() {
   try {
     await chrome.runtime.sendMessage({
       target: "offscreen",
-      type: "start-recording",
+      type: MESSAGE_TYPES.START_RECORDING,
       tabId: recordingState.tabId,
       tabTitle: recordingState.tabTitle,
       streamId: recordingState.streamId,
@@ -322,16 +324,16 @@ async function startRecordingFlow() {
 
 async function stopRecordingFlow() {
   if (recordingState.status === "idle") {
-    broadcast({ type: "warn", text: "No active recording to stop." });
+    broadcast({ type: MESSAGE_TYPES.WARN, text: "No active recording to stop." });
     return;
   }
 
-  broadcast({ type: "status", text: "Stopping recording. Please wait..." });
+  broadcast({ type: MESSAGE_TYPES.STATUS, text: "Stopping recording. Please wait..." });
 
   try {
     await ensureOffscreenDocument();
     await waitForOffscreenReady();
-    await chrome.runtime.sendMessage({ target: "offscreen", type: "stop-recording" });
+    await chrome.runtime.sendMessage({ target: "offscreen", type: MESSAGE_TYPES.STOP_RECORDING });
   } catch (err) {
     throw new Error("Failed to stop offscreen recording: " + (err?.message || err));
   }
@@ -340,7 +342,7 @@ async function stopRecordingFlow() {
 function handleAsyncFailure(context, err) {
   const text = `${context}: ${err?.message || err}`;
   console.error(text);
-  broadcast({ type: "error", text });
+  broadcast({ type: MESSAGE_TYPES.ERROR, text });
   if (recordingState.status !== "recording") {
     setBadge(hostReady ? "ready" : "error");
   } else {
@@ -372,7 +374,7 @@ chrome.runtime.onConnect.addListener((port) => {
   popupPorts.add(port);
 
   port.postMessage({
-    type: hostReady ? "host-ready" : "status",
+    type: hostReady ? MESSAGE_TYPES.HOST_READY : MESSAGE_TYPES.STATUS,
     text: hostReady ? "native host is ready" : "background-alive (native not connected)",
   });
   sendRecordingStatus(port);
@@ -380,47 +382,47 @@ chrome.runtime.onConnect.addListener((port) => {
   port.onMessage.addListener((msg) => {
     if (!msg) return;
 
-    if (msg.type === "ensure-native") {
+    if (msg.type === MESSAGE_TYPES.ENSURE_NATIVE) {
       ensureNativePort();
 
       if (hostReady) {
-        port.postMessage({ type: "host-ready", text: "native host is ready" });
+        port.postMessage({ type: MESSAGE_TYPES.HOST_READY, text: "native host is ready" });
       } else {
-        port.postMessage({ type: "status", text: "connecting native host..." });
+        port.postMessage({ type: MESSAGE_TYPES.STATUS, text: "connecting native host..." });
       }
       return;
     }
 
-    if (msg.type === "start-recording") {
+    if (msg.type === MESSAGE_TYPES.START_RECORDING) {
       startRecording();
       return;
     }
 
-    if (msg.type === "stop-recording") {
+    if (msg.type === MESSAGE_TYPES.STOP_RECORDING) {
       stopRecording();
       return;
     }
 
-    if (msg.type === "open-recordings-folder") {
+    if (msg.type === MESSAGE_TYPES.OPEN_RECORDINGS_FOLDER) {
       openRecordingsFolder();
       return;
     }
 
-    if (msg.type === "open-saved-folder") {
+    if (msg.type === MESSAGE_TYPES.OPEN_SAVED_FOLDER) {
       openSavedRecordingFolder(msg.folderPath, port);
       return;
     }
 
-    if (msg.type === "request-audio-playback") {
+    if (msg.type === MESSAGE_TYPES.REQUEST_AUDIO_PLAYBACK) {
       const { requestId, audioPath } = msg;
       if (typeof audioPath !== "string" || !audioPath) {
-        port.postMessage({ type: "error", text: "Invalid audio path for playback request." });
+        port.postMessage({ type: MESSAGE_TYPES.ERROR, text: "Invalid audio path for playback request." });
         return;
       }
 
       const np = ensureNativePort();
       if (!np) {
-        port.postMessage({ type: "error", text: "Native host unavailable for audio playback request." });
+        port.postMessage({ type: MESSAGE_TYPES.ERROR, text: "Native host unavailable for audio playback request." });
         return;
       }
 
@@ -436,7 +438,7 @@ chrome.runtime.onConnect.addListener((port) => {
         });
       } catch (err) {
         audioRequestMap.delete(id);
-        port.postMessage({ type: "error", text: "Failed to request audio file: " + (err?.message || err) });
+        port.postMessage({ type: MESSAGE_TYPES.ERROR, text: "Failed to request audio file: " + (err?.message || err) });
       }
       return;
     }
@@ -462,7 +464,7 @@ chrome.runtime.onMessage.addListener((msg) => {
   if (!msg || msg.source !== "offscreen") return;
 
   switch (msg.type) {
-    case "offscreen-ready":
+    case MESSAGE_TYPES.OFFSCREEN_READY:
       offscreenReady = true;
       if (offscreenReadyResolver) {
         offscreenReadyResolver();
@@ -470,20 +472,20 @@ chrome.runtime.onMessage.addListener((msg) => {
       }
       break;
 
-    case "status":
-    case "warn":
-    case "log":
+    case MESSAGE_TYPES.STATUS:
+    case MESSAGE_TYPES.WARN:
+    case MESSAGE_TYPES.LOG:
       broadcast({ type: msg.type, text: msg.text || "" });
       break;
 
-    case "error":
-      broadcast({ type: "error", text: msg.text || "" });
+    case MESSAGE_TYPES.ERROR:
+      broadcast({ type: MESSAGE_TYPES.ERROR, text: msg.text || "" });
       setBadge("error");
       resetRecordingState();
       broadcastRecordingStatus();
       break;
 
-    case "recording-started":
+    case MESSAGE_TYPES.RECORDING_STARTED:
       recordingState.status = "recording";
       broadcastRecordingStatus();
       if (hostReady) {
@@ -491,23 +493,23 @@ chrome.runtime.onMessage.addListener((msg) => {
       } else {
         setBadge("connecting");
       }
-      broadcast({ type: "recording-started", text: msg.text || "Recording started." });
+      broadcast({ type: MESSAGE_TYPES.RECORDING_STARTED, text: msg.text || "Recording started." });
       break;
 
-    case "recording-stopped":
+    case MESSAGE_TYPES.RECORDING_STOPPED:
       resetRecordingState();
       broadcastRecordingStatus();
       setBadge(hostReady ? "ready" : "idle");
-      broadcast({ type: "recording-stopped", text: msg.text || "Recording finished." });
+      broadcast({ type: MESSAGE_TYPES.RECORDING_STOPPED, text: msg.text || "Recording finished." });
       break;
 
-    case "audio":
+    case MESSAGE_TYPES.AUDIO:
       if (typeof msg.base64 === "string") {
         forwardAudioToNative(msg.base64, msg.tabTitle ?? null);
       }
       break;
 
-    case "offscreen-closed":
+    case MESSAGE_TYPES.OFFSCREEN_CLOSED:
       offscreenReady = false;
       break;
 
