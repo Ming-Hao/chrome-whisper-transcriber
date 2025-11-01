@@ -65,6 +65,14 @@ function attachPaneToggle(pane) {
   applyPaneState(pane, toggle, pane.classList.contains("collapsed"));
 }
 
+function isRecordingInProgress() {
+  return (
+    recordingActive ||
+    lastRecordingStatus === "recording" ||
+    lastRecordingStatus === "starting"
+  );
+}
+
 function queryActiveTab() {
   return new Promise((resolve) => {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
@@ -133,10 +141,31 @@ window.addEventListener("unload", () => {
   void restoreReplayMute();
 });
 
+window.addEventListener("beforeunload", (event) => {
+  if (closingPopup || !isRecordingInProgress()) {
+    return;
+  }
+  event.preventDefault();
+  event.returnValue = "";
+});
+
 async function handlePopupClose() {
   if (closingPopup) {
     return;
   }
+
+  if (isRecordingInProgress()) {
+    const confirmed = window.confirm("Recording is still in progress. Stop recording and close the window?");
+    if (!confirmed) {
+      return;
+    }
+    try {
+      stopRecordingFlow();
+    } catch (err) {
+      console.error("Failed to stop recording before closing:", err);
+    }
+  }
+
   closingPopup = true;
   try {
     await restoreReplayMute();
