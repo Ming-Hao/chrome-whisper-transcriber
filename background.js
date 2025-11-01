@@ -6,6 +6,7 @@ let nativePort = null;
 let hostReady = false; // becomes true on first host message
 const popupPorts = new Set();
 const audioRequestMap = new Map();
+const tabUUIDs = new Map();
 
 const BADGE = {
   idle: {
@@ -40,10 +41,75 @@ const recordingState = {
   tabId: null,
   streamId: null,
   tabTitle: null,
+  tabUUID: null,
 };
 
 let offscreenReady = false;
 let offscreenReadyResolver = null;
+let activeRecordingContext = null;
+
+function ensureTabUUID(tabId) {
+  if (typeof tabId !== "number") {
+    return null;
+  }
+  if (!tabUUIDs.has(tabId)) {
+    tabUUIDs.set(tabId, crypto.randomUUID());
+  }
+  return tabUUIDs.get(tabId);
+}
+
+function captureTabContext(tab) {
+  if (!tab || typeof tab.id !== "number") {
+    return {
+      tabUUID: null,
+      tabId: tab?.id ?? null,
+      tabTitle: tab?.title || null,
+      tabURL: tab?.url || null,
+    };
+  }
+
+  const tabUUID = ensureTabUUID(tab.id);
+  const tabTitle = typeof tab.title === "string" ? tab.title : null;
+  const tabURL = typeof tab.url === "string" ? tab.url : null;
+
+  return {
+    tabUUID,
+    tabId: tab.id,
+    tabTitle,
+    tabURL,
+    capturedAt: new Date().toISOString(),
+  };
+}
+
+function registerExistingTabs() {
+  chrome.tabs
+    .query({})
+    .then((tabs) => {
+      tabs.forEach((tab) => {
+        if (typeof tab.id === "number" && !tabUUIDs.has(tab.id)) {
+          tabUUIDs.set(tab.id, crypto.randomUUID());
+        }
+      });
+    })
+    .catch((err) => {
+      console.warn("Failed to seed tab UUID map:", err);
+    });
+}
+
+registerExistingTabs();
+
+chrome.tabs.onCreated.addListener((tab) => {
+  if (typeof tab?.id === "number") {
+    ensureTabUUID(tab.id);
+  }
+});
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  tabUUIDs.delete(tabId);
+  if (activeRecordingContext?.tabId === tabId) {
+    activeRecordingContext = null;
+  }
+});
 
 function setBadge(state) {
   const config = BADGE[state] || BADGE.idle;
@@ -70,6 +136,7 @@ function buildRecordingStatusMessage() {
     status: recordingState.status,
     tabId: recordingState.tabId,
     tabTitle: recordingState.tabTitle,
+    tabUUID: recordingState.tabUUID,
   };
 }
 
@@ -159,6 +226,8 @@ function resetRecordingState() {
   recordingState.tabId = null;
   recordingState.streamId = null;
   recordingState.tabTitle = null;
+  recordingState.tabUUID = null;
+  activeRecordingContext = null;
 }
 
 async function ensureOffscreenDocument() {
@@ -194,7 +263,7 @@ function waitForOffscreenReady() {
   });
 }
 
-async function forwardAudioToNative(base64Audio, tabTitle) {
+async function forwardAudioToNative(base64Audio, metadata = null) {
   const np = ensureNativePort();
   if (!np) {
     broadcast({ type: MESSAGE_TYPES.ERROR, text: "Cannot forward audio: native host unavailable" });
@@ -202,10 +271,25 @@ async function forwardAudioToNative(base64Audio, tabTitle) {
     return;
   }
   try {
-    np.postMessage({ audioChunk: base64Audio, tabTitle: tabTitle || null });
+    const context = {
+      tabUUID: metadata?.tabUUID ?? activeRecordingContext?.tabUUID ?? null,
+      tabId: metadata?.tabId ?? activeRecordingContext?.tabId ?? null,
+      tabTitle: metadata?.tabTitle ?? activeRecordingContext?.tabTitle ?? null,
+      tabURL: metadata?.tabURL ?? activeRecordingContext?.tabURL ?? null,
+    };
+
+    np.postMessage({
+      audioChunk: base64Audio,
+      tabTitle: context.tabTitle || null,
+      tabUUID: context.tabUUID || null,
+      tabId: typeof context.tabId === "number" ? context.tabId : null,
+      tabURL: context.tabURL || null,
+    });
     broadcast({ type: MESSAGE_TYPES.STATUS, text: "Audio forwarded to native host" });
   } catch (err) {
     broadcast({ type: MESSAGE_TYPES.ERROR, text: "Forwarding failed: " + (err?.message || err) });
+  } finally {
+    activeRecordingContext = null;
   }
 }
 
@@ -285,6 +369,14 @@ async function startRecordingFlow() {
 
   recordingState.tabId = activeTab?.id ?? null;
   recordingState.tabTitle = activeTab?.title || null;
+  const tabContext = captureTabContext(activeTab);
+  recordingState.tabUUID = tabContext.tabUUID;
+  activeRecordingContext = {
+    tabUUID: tabContext.tabUUID,
+    tabId: tabContext.tabId,
+    tabTitle: tabContext.tabTitle ?? recordingState.tabTitle,
+    tabURL: tabContext.tabURL,
+  };
 
   try {
     await ensureOffscreenDocument();
@@ -313,6 +405,8 @@ async function startRecordingFlow() {
       type: MESSAGE_TYPES.START_RECORDING,
       tabId: recordingState.tabId,
       tabTitle: recordingState.tabTitle,
+      tabUUID: recordingState.tabUUID,
+      tabURL: activeRecordingContext?.tabURL ?? null,
       streamId: recordingState.streamId,
     });
   } catch (err) {
@@ -505,7 +599,12 @@ chrome.runtime.onMessage.addListener((msg) => {
 
     case MESSAGE_TYPES.AUDIO:
       if (typeof msg.base64 === "string") {
-        forwardAudioToNative(msg.base64, msg.tabTitle ?? null);
+        forwardAudioToNative(msg.base64, {
+          tabUUID: msg.tabUUID ?? null,
+          tabId: msg.tabId ?? null,
+          tabTitle: msg.tabTitle ?? null,
+          tabURL: msg.tabURL ?? null,
+        });
       }
       break;
 

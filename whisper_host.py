@@ -216,6 +216,9 @@ while True:
                 model,
                 save_to_disk=msg.get("saveToDisk", True),
                 tab_title=msg.get("tabTitle"),
+                tab_uuid=msg.get("tabUUID"),
+                tab_id=msg.get("tabId"),
+                tab_url=msg.get("tabURL"),
             )
             display_text = text if len(text) <= 120 else f"{text[:117]}..."
             logger.info("Transcription complete: %s", display_text)

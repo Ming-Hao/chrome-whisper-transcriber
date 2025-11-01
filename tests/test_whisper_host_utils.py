@@ -1,4 +1,5 @@
 import base64
+import json
 import os
 import tempfile
 import unittest
@@ -36,6 +37,36 @@ class WhisperHostUtilsTest(unittest.TestCase):
                 self.assertEqual(f.read(), self.fake_audio_bytes)
             with open(saved_paths["text"], "r", encoding="utf-8") as f:
                 self.assertEqual(f.read(), "hello world")
+
+    def test_save_recording_bundle_with_uuid_metadata(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tab_uuid = "test-uuid-123"
+            saved_paths = utils.save_recording_bundle(
+                self.fake_audio_bytes,
+                "sample text",
+                output_dir=tmpdir,
+                tab_title="Metadata Tab",
+                tab_uuid=tab_uuid,
+                tab_id=99,
+                tab_url="https://example.com",
+            )
+            tab_folder = os.path.join(tmpdir, tab_uuid)
+            metadata_path = os.path.join(tab_folder, "tab.json")
+
+            self.assertTrue(saved_paths["folder"].startswith(tab_folder))
+            self.assertEqual(saved_paths["tabFolder"], tab_folder)
+            self.assertEqual(saved_paths["metadata"], metadata_path)
+            self.assertTrue(os.path.exists(metadata_path))
+
+            with open(metadata_path, "r", encoding="utf-8") as meta_file:
+                metadata = json.load(meta_file)
+
+            self.assertEqual(metadata["tabUUID"], tab_uuid)
+            self.assertEqual(metadata["lastTabId"], 99)
+            self.assertEqual(metadata["lastTitle"], "Metadata Tab")
+            self.assertEqual(metadata["lastURL"], "https://example.com")
+            self.assertEqual(metadata["lastRecordingFolder"], saved_paths["folder"])
+            self.assertIn("updatedAt", metadata)
 
     def test_transcribe_audio_chunk_without_saving(self):
         with mock.patch.object(utils, "convert_webm_to_wav_array", return_value=self.fake_wav_array) as convert_mock:

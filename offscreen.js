@@ -8,6 +8,9 @@ let playbackAudio = null;
 let chunks = [];
 let currentTabTitle = null;
 let currentStreamId = null;
+let currentTabUUID = null;
+let currentTabId = null;
+let currentTabURL = null;
 
 function sendMessage(message) {
   chrome.runtime.sendMessage({ source: "offscreen", ...message }).catch(() => {});
@@ -34,11 +37,17 @@ function resetState() {
   chunks = [];
   currentTabTitle = null;
   currentStreamId = null;
+  currentTabUUID = null;
+  currentTabId = null;
+  currentTabURL = null;
   stopStream();
 }
 
 function handleRecorderStop() {
   const capturedTitle = currentTabTitle;
+  const capturedUUID = currentTabUUID;
+  const capturedTabId = currentTabId;
+  const capturedTabURL = currentTabURL;
   stopStream();
   currentTabTitle = null;
 
@@ -62,7 +71,14 @@ function handleRecorderStop() {
       if (!base64) {
         throw new Error("Invalid audio data");
       }
-      sendMessage({ type: MESSAGE_TYPES.AUDIO, base64, tabTitle: capturedTitle || null });
+      sendMessage({
+        type: MESSAGE_TYPES.AUDIO,
+        base64,
+        tabTitle: capturedTitle || null,
+        tabUUID: capturedUUID || null,
+        tabId: typeof capturedTabId === "number" ? capturedTabId : null,
+        tabURL: capturedTabURL || null,
+      });
     } catch (err) {
       sendMessage({ type: MESSAGE_TYPES.ERROR, text: "Audio encoding failed: " + (err?.message || err) });
     } finally {
@@ -92,6 +108,9 @@ function startRecordingCommand(data) {
   chunks = [];
   currentTabTitle = data?.tabTitle || null;
   currentStreamId = data?.streamId || null;
+  currentTabUUID = data?.tabUUID || null;
+  currentTabId = typeof data?.tabId === "number" ? data.tabId : null;
+  currentTabURL = typeof data?.tabURL === "string" ? data.tabURL : null;
 
   if (!currentStreamId) {
     sendMessage({ type: MESSAGE_TYPES.ERROR, text: "Missing stream identifier for tab capture." });
