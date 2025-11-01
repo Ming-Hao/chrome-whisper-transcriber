@@ -1,6 +1,7 @@
 import base64
 import io
 import json
+import logging
 import os
 import platform
 import re
@@ -81,6 +82,7 @@ def save_recording_bundle(
 
     audio_path = folder_path / "audio.webm"
     text_path = folder_path / "transcript.txt"
+    history_path = (tab_root if tab_uuid else output_dir_path) / "history.jsonl"
 
     with audio_path.open("wb") as f:
         f.write(audio_bytes)
@@ -101,6 +103,23 @@ def save_recording_bundle(
         metadata_path = tab_root / "tab.json"
         with metadata_path.open("w", encoding="utf-8") as f:
             json.dump(metadata, f, ensure_ascii=False, indent=2)
+
+    history_entry = {
+        "createdAt": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "folder": str(folder_path),
+        "audio": str(audio_path),
+        "text": str(text_path),
+        "tabUUID": tab_uuid,
+        "tabId": tab_id,
+        "tabTitle": tab_title,
+        "tabURL": tab_url,
+    }
+    try:
+        with history_path.open("a", encoding="utf-8") as f:
+            json.dump(history_entry, f, ensure_ascii=False)
+            f.write("\n")
+    except OSError as exc:
+        logging.warning("Failed to append history entry to %s: %s", history_path, exc)
 
     result = {
         "folder": str(folder_path),
@@ -161,6 +180,80 @@ def open_specific_folder(folder_path):
         raise RuntimeError(f"Unable to open folder: {exc}") from exc
 
     return folder_str
+
+
+def _resolve_history_path(tab_uuid=None, output_dir="recordings"):
+    base = Path(output_dir)
+    if tab_uuid:
+        return base / tab_uuid / "history.jsonl"
+    return base / "history.jsonl"
+
+
+def _parse_history_timestamp(value):
+    if not value:
+        return datetime.min
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return datetime.min
+
+
+def load_history_entries(tab_uuid=None, output_dir="recordings", limit=None, include_transcripts=True):
+    """
+    Load history records for the given tab UUID from history.jsonl.
+
+    Returns a list sorted by createdAt desc. Each entry includes transcript text if requested.
+    """
+    history_path = _resolve_history_path(tab_uuid, output_dir=output_dir)
+    if not history_path.exists():
+        return []
+
+    entries = []
+    try:
+        with history_path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    record = json.loads(stripped)
+                except json.JSONDecodeError:
+                    logging.warning("Skipping malformed history line in %s", history_path)
+                    continue
+                entries.append(record)
+    except OSError as exc:
+        logging.error("Failed to read history file %s: %s", history_path, exc)
+        return []
+
+    entries.sort(
+        key=lambda entry: _parse_history_timestamp(entry.get("createdAt")),
+        reverse=True,
+    )
+
+    if isinstance(limit, int) and limit > 0:
+        entries = entries[:limit]
+
+    if not include_transcripts:
+        return entries
+
+    enriched = []
+    for entry in entries:
+        enriched_entry = dict(entry)
+        text_path_str = entry.get("text")
+        transcript_text = None
+        if text_path_str:
+            text_path = Path(text_path_str)
+            if not text_path.is_absolute():
+                text_path = (Path.cwd() / text_path).resolve()
+            try:
+                with text_path.open("r", encoding="utf-8") as transcript_handle:
+                    transcript_text = transcript_handle.read().strip()
+            except OSError as exc:
+                logging.warning("Unable to read transcript for history entry %s: %s", text_path, exc)
+        if transcript_text is not None:
+            enriched_entry["transcript"] = transcript_text
+        enriched.append(enriched_entry)
+    return enriched
 
 
 def transcribe_audio_chunk(

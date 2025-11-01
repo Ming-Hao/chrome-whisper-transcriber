@@ -4,15 +4,20 @@ let logElement = null;
 let startButton = null;
 let stopButton = null;
 let openFolderButton = null;
+let historyContainer = null;
 
 const TOGGLE_HOTKEY_KEY = "e"; // Use Alt/Option + E to switch
 const pendingAudioRequests = new Map();
+const pendingHistoryRequests = new Map();
 const cachedAudioByPath = new Map();
 
 let bgPort = null;
 let hostReadyReceived = false;
 let recordingActive = false;
 let lastRecordingStatus = "idle";
+let latestHistoryRequestId = null;
+let historyLoaded = false;
+let historyRequestedOnce = false;
 
 const replayMuteInfo = {
   tabId: null,
@@ -20,6 +25,45 @@ const replayMuteInfo = {
 };
 
 let closingPopup = false;
+
+function applyPaneState(pane, toggle, collapsed) {
+  if (collapsed) {
+    pane.classList.add("collapsed");
+    toggle.setAttribute("aria-expanded", "false");
+    toggle.textContent = "+";
+  } else {
+    pane.classList.remove("collapsed");
+    toggle.setAttribute("aria-expanded", "true");
+    toggle.textContent = "−";
+  }
+}
+
+function attachPaneToggle(pane) {
+  const toggle = pane.querySelector(".pane-toggle");
+  const header = pane.querySelector(".pane-header");
+  if (!toggle || !header) {
+    return;
+  }
+
+  const handleToggle = () => {
+    const collapsed = pane.classList.contains("collapsed");
+    applyPaneState(pane, toggle, !collapsed);
+  };
+
+  toggle.addEventListener("click", (event) => {
+    event.stopPropagation();
+    handleToggle();
+  });
+
+  header.addEventListener("click", (event) => {
+    if (event.target instanceof HTMLElement && event.target.closest(".pane-toggle")) {
+      return;
+    }
+    handleToggle();
+  });
+
+  applyPaneState(pane, toggle, pane.classList.contains("collapsed"));
+}
 
 function queryActiveTab() {
   return new Promise((resolve) => {
@@ -135,6 +179,9 @@ function connectBackground() {
         hostReadyReceived = true;
         applyRecordingStatus(lastRecordingStatus);
         log(msg.text || "host ready");
+        if (!historyLoaded && !latestHistoryRequestId) {
+          void loadHistoryForActiveTab();
+        }
         break;
 
       case MESSAGE_TYPES.RESULT:
@@ -188,6 +235,14 @@ function connectBackground() {
         log(msg.text || "");
         break;
 
+      case MESSAGE_TYPES.TAB_HISTORY_RESULT:
+        handleHistoryResult(msg);
+        break;
+
+      case MESSAGE_TYPES.TAB_HISTORY_ERROR:
+        handleHistoryError(msg);
+        break;
+
       default:
         log(msg.text || "");
     }
@@ -215,6 +270,8 @@ function ensureBgPort() {
 document.addEventListener("DOMContentLoaded", () => {
   connectBackground();
 
+  document.querySelectorAll(".pane").forEach((pane) => attachPaneToggle(pane));
+
   const closeBtn = document.getElementById("closePopup");
   if (closeBtn) {
     closeBtn.addEventListener("click", (event) => {
@@ -239,6 +296,9 @@ document.addEventListener("DOMContentLoaded", () => {
   startButton = document.getElementById("startCapture");
   stopButton = document.getElementById("stopCapture");
   openFolderButton = document.getElementById("openRecordings");
+  historyContainer = document.getElementById("history");
+  renderHistoryPlaceholder("Loading history...");
+  void loadHistoryForActiveTab();
 
   lockUI();
 
@@ -339,6 +399,166 @@ function logWarning(text) { appendLogLine(text, MESSAGE_TYPES.WARN); }
 function logError(text) { appendLogLine(text, MESSAGE_TYPES.ERROR); }
 function logResult(text, extraInfo) { appendLogLine(text, MESSAGE_TYPES.RESULT, extraInfo || {}); }
 
+function createResultControls({ text, audioDataUrl, savedPaths, tabTitle }) {
+  const controls = [];
+  const audioPath = savedPaths?.audio || null;
+  const folderPath = savedPaths?.folder || null;
+  const transcriptPath = savedPaths?.text || null;
+
+  let resolvedDataUrl = audioDataUrl || (audioPath ? cachedAudioByPath.get(audioPath) || null : null);
+  let audioInstance = null;
+  let isFetching = false;
+
+  if (resolvedDataUrl || audioPath) {
+    const replayBtn = document.createElement("button");
+    replayBtn.className = "play-icon-btn";
+    replayBtn.innerHTML = "▶️";
+    replayBtn.title = "Replay";
+
+    if (audioPath) {
+      replayBtn.dataset.audioPath = audioPath;
+    }
+    if (folderPath) {
+      replayBtn.dataset.folderPath = folderPath;
+    }
+    if (transcriptPath) {
+      replayBtn.dataset.transcriptPath = transcriptPath;
+    }
+    if (tabTitle) {
+      replayBtn.dataset.tabTitle = tabTitle;
+    }
+
+    const ensureAudioInstance = () => {
+      if (!resolvedDataUrl) {
+        return null;
+      }
+      if (!audioInstance) {
+        audioInstance = new Audio(resolvedDataUrl);
+        audioInstance.addEventListener("ended", () => {
+          replayBtn.innerHTML = "▶️";
+          void restoreReplayMute();
+        });
+        audioInstance.addEventListener("pause", () => {
+          if (!audioInstance) return;
+          if (audioInstance.currentTime === 0 || audioInstance.currentTime < audioInstance.duration) {
+            replayBtn.innerHTML = "▶️";
+            void restoreReplayMute();
+          }
+        });
+      }
+      return audioInstance;
+    };
+
+    const playOrToggle = async () => {
+      const instance = ensureAudioInstance();
+      if (!instance) {
+        return;
+      }
+      try {
+        if (!instance.paused && !instance.ended) {
+          instance.pause();
+          instance.currentTime = 0;
+          replayBtn.innerHTML = "▶️";
+          await restoreReplayMute();
+          return;
+        }
+
+        await muteCurrentTabForReplay();
+        instance.currentTime = 0;
+        replayBtn.innerHTML = "🔊";
+        await instance.play();
+      } catch (err) {
+        console.error("Audio playback failed:", err);
+        replayBtn.innerHTML = "⚠️";
+        await restoreReplayMute();
+        setTimeout(() => { replayBtn.innerHTML = "▶️"; }, 1200);
+      }
+    };
+
+    replayBtn.addEventListener("click", () => {
+      if (resolvedDataUrl) {
+        playOrToggle().catch((err) => console.error("Replay toggle failed:", err));
+        return;
+      }
+
+      if (!audioPath) {
+        console.warn("No playable audio path found.");
+        return;
+      }
+
+      const cached = cachedAudioByPath.get(audioPath);
+      if (cached) {
+        resolvedDataUrl = cached;
+        audioInstance = null;
+        playOrToggle().catch((err) => console.error("Replay toggle failed:", err));
+        return;
+      }
+
+      if (isFetching) {
+        return;
+      }
+
+      isFetching = true;
+      replayBtn.disabled = true;
+      replayBtn.innerHTML = "⏳";
+
+      requestAudioFromHost(audioPath, tabTitle || null,
+        (dataUrl) => {
+          isFetching = false;
+          replayBtn.disabled = false;
+          replayBtn.innerHTML = "▶️";
+
+          if (audioPath) {
+            cachedAudioByPath.set(audioPath, dataUrl);
+          }
+          resolvedDataUrl = dataUrl;
+          audioInstance = null;
+          playOrToggle().catch((err) => console.error("Replay toggle failed:", err));
+        },
+        (errorText) => {
+          isFetching = false;
+          replayBtn.disabled = false;
+          replayBtn.innerHTML = "⚠️";
+          if (errorText) {
+            logError(errorText);
+          }
+          setTimeout(() => { replayBtn.innerHTML = "▶️"; }, 1500);
+        });
+    });
+
+    controls.push(replayBtn);
+  }
+
+  if (folderPath) {
+    const openFolderBtn = document.createElement("button");
+    openFolderBtn.className = "folder-icon-btn";
+    openFolderBtn.innerHTML = "📂";
+    openFolderBtn.title = "Open Folder";
+    openFolderBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openSavedFolder(folderPath);
+    });
+    controls.push(openFolderBtn);
+  }
+
+  const copyBtn = document.createElement("button");
+  copyBtn.className = "copy-icon-btn";
+  copyBtn.innerHTML = "📋";
+  copyBtn.title = "Copy";
+  copyBtn.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(text || "");
+      copyBtn.innerHTML = "✅";
+      setTimeout(() => { copyBtn.innerHTML = "📋"; }, 1000);
+    } catch (err) {
+      console.error("Clipboard copy failed:", err);
+    }
+  });
+  controls.push(copyBtn);
+
+  return controls;
+}
+
 function appendLogLine(text, type, extraInfo = {}) {
   const displayType =
     (type === MESSAGE_TYPES.RESULT ||
@@ -362,161 +582,162 @@ function appendLogLine(text, type, extraInfo = {}) {
   line.appendChild(span);
 
   if (displayType === MESSAGE_TYPES.RESULT) {
-    const audioDataUrl = extraInfo?.audioDataUrl || null;
     const savedPaths = extraInfo?.savedPaths || null;
-    const audioPath = savedPaths?.audio || null;
-
-    if (audioDataUrl || audioPath) {
-      const replayBtn = document.createElement("button");
-      replayBtn.className = "play-icon-btn";
-      replayBtn.innerHTML = "▶️";
-      replayBtn.title = "Replay";
-
-      if (audioPath) {
-        replayBtn.dataset.audioPath = audioPath;
-      }
-      if (savedPaths?.folder) {
-        replayBtn.dataset.folderPath = savedPaths.folder;
-      }
-      if (savedPaths?.text) {
-        replayBtn.dataset.transcriptPath = savedPaths.text;
-      }
-      if (extraInfo?.tabTitle) {
-        replayBtn.dataset.tabTitle = extraInfo.tabTitle;
-      }
-
-      let resolvedDataUrl = audioDataUrl || (audioPath ? cachedAudioByPath.get(audioPath) || null : null);
-      let audioInstance = null;
-      let isFetching = false;
-
-      const ensureAudioInstance = () => {
-        if (!resolvedDataUrl) {
-          return null;
-        }
-        if (!audioInstance) {
-          audioInstance = new Audio(resolvedDataUrl);
-          audioInstance.addEventListener("ended", () => {
-            replayBtn.innerHTML = "▶️";
-            void restoreReplayMute(); // intentionally fire-and-forget: we only need to trigger mute restoration
-          });
-          audioInstance.addEventListener("pause", () => {
-            if (!audioInstance) return;
-            if (audioInstance.currentTime === 0 || audioInstance.currentTime < audioInstance.duration) {
-              replayBtn.innerHTML = "▶️";
-              void restoreReplayMute(); // intentionally fire-and-forget: we only need to trigger mute restoration
-            }
-          });
-        }
-        return audioInstance;
-      };
-
-      const playOrToggle = async () => {
-        const instance = ensureAudioInstance();
-        if (!instance) {
-          return;
-        }
-        try {
-          if (!instance.paused && !instance.ended) {
-            instance.pause();
-            instance.currentTime = 0;
-            replayBtn.innerHTML = "▶️";
-            await restoreReplayMute();
-            return;
-          }
-
-          await muteCurrentTabForReplay();
-          instance.currentTime = 0;
-          replayBtn.innerHTML = "🔊";
-          await instance.play();
-        } catch (err) {
-          console.error("Audio playback failed:", err);
-          replayBtn.innerHTML = "⚠️";
-          await restoreReplayMute();
-          setTimeout(() => { replayBtn.innerHTML = "▶️"; }, 1200);
-        }
-      };
-
-      replayBtn.addEventListener("click", () => {
-        if (resolvedDataUrl) {
-          playOrToggle().catch((err) => console.error("Replay toggle failed:", err));
-          return;
-        }
-
-        if (!audioPath) {
-          console.warn("No playable audio path found.");
-          return;
-        }
-
-        const cached = cachedAudioByPath.get(audioPath);
-        if (cached) {
-          resolvedDataUrl = cached;
-          audioInstance = null;
-          playOrToggle().catch((err) => console.error("Replay toggle failed:", err));
-          return;
-        }
-
-        if (isFetching) {
-          return;
-        }
-
-        isFetching = true;
-        replayBtn.disabled = true;
-        replayBtn.innerHTML = "⏳";
-
-        requestAudioFromHost(audioPath, extraInfo?.tabTitle || null,
-          (dataUrl) => {
-            isFetching = false;
-            replayBtn.disabled = false;
-            replayBtn.innerHTML = "▶️";
-
-            if (audioPath) {
-              cachedAudioByPath.set(audioPath, dataUrl);
-            }
-            resolvedDataUrl = dataUrl;
-            audioInstance = null;
-            playOrToggle().catch((err) => console.error("Replay toggle failed:", err));
-          },
-          (errorText) => {
-            isFetching = false;
-            replayBtn.disabled = false;
-            replayBtn.innerHTML = "⚠️";
-            if (errorText) {
-              logError(errorText);
-            }
-            setTimeout(() => { replayBtn.innerHTML = "▶️"; }, 1500);
-          });
-      });
-
-      line.appendChild(replayBtn);
-    }
-    if (savedPaths?.folder) {
-      const openFolderBtn = document.createElement("button");
-      openFolderBtn.className = "folder-icon-btn";
-      openFolderBtn.innerHTML = "📂";
-      openFolderBtn.title = "Open Folder";
-      openFolderBtn.addEventListener("click", (event) => {
-        event.stopPropagation();
-        openSavedFolder(savedPaths.folder);
-      });
-      line.appendChild(openFolderBtn);
-    }
-    const copyBtn = document.createElement("button");
-    copyBtn.className = "copy-icon-btn";
-    copyBtn.innerHTML = "📋";
-    copyBtn.title = "Copy";
-    copyBtn.addEventListener("click", async () => {
-      try {
-        await navigator.clipboard.writeText(text); // copy without timestamp
-        copyBtn.innerHTML = "✅";
-        setTimeout(() => { copyBtn.innerHTML = "📋"; }, 1000);
-      } catch (err) {
-        console.error("Clipboard copy failed:", err);
-      }
+    const controls = createResultControls({
+      text,
+      audioDataUrl: extraInfo?.audioDataUrl || null,
+      savedPaths,
+      tabTitle: extraInfo?.tabTitle || null,
     });
-    line.appendChild(copyBtn);
+    controls.forEach((control) => line.appendChild(control));
   }
 
   logElement.prepend(line);
+}
+
+function renderHistoryPlaceholder(message) {
+  if (!historyContainer) {
+    return;
+  }
+  historyContainer.innerHTML = "";
+  const placeholder = document.createElement("div");
+  placeholder.className = "history-placeholder";
+  placeholder.textContent = message;
+  historyContainer.appendChild(placeholder);
+}
+
+function renderHistoryEntries(entries) {
+  if (!historyContainer) {
+    return;
+  }
+
+  historyContainer.innerHTML = "";
+  if (!Array.isArray(entries) || entries.length === 0) {
+    renderHistoryPlaceholder("No saved history yet.");
+    return;
+  }
+
+  entries.forEach((entry) => {
+    const transcriptText = entry?.transcript || "";
+    const savedPaths = {
+      folder: entry?.folder || null,
+      audio: entry?.audio || null,
+      text: entry?.text || null,
+    };
+
+    const item = document.createElement("div");
+    item.className = "history-entry";
+
+    const meta = document.createElement("div");
+    meta.className = "history-entry-meta";
+    let createdAt = "";
+    if (entry?.createdAt) {
+      const parsed = new Date(entry.createdAt);
+      if (!Number.isNaN(parsed.getTime())) {
+        createdAt = parsed.toLocaleString();
+      }
+    }
+    const title = entry?.tabTitle || entry?.tabURL || "Untitled tab";
+    meta.textContent = createdAt ? `${createdAt} - ${title}` : title;
+    item.appendChild(meta);
+
+    const content = document.createElement("div");
+    content.className = "history-entry-text";
+    content.textContent = transcriptText || "[No transcript]";
+    item.appendChild(content);
+
+    const actions = document.createElement("div");
+    actions.className = "history-entry-actions";
+    const controls = createResultControls({
+      text: transcriptText,
+      audioDataUrl: null,
+      savedPaths,
+      tabTitle: entry?.tabTitle || null,
+    });
+    controls.forEach((control) => actions.appendChild(control));
+    item.appendChild(actions);
+
+    historyContainer.appendChild(item);
+  });
+}
+
+function handleHistoryResult(msg) {
+  const requestId = msg?.requestId || null;
+  if (requestId) {
+    pendingHistoryRequests.delete(requestId);
+    if (latestHistoryRequestId && requestId !== latestHistoryRequestId) {
+      return;
+    }
+  }
+  latestHistoryRequestId = null;
+  historyLoaded = true;
+  historyRequestedOnce = true;
+  renderHistoryEntries(msg?.entries || []);
+}
+
+function handleHistoryError(msg) {
+  const requestId = msg?.requestId || null;
+  if (requestId) {
+    pendingHistoryRequests.delete(requestId);
+    if (latestHistoryRequestId && requestId !== latestHistoryRequestId) {
+      return;
+    }
+  }
+  latestHistoryRequestId = null;
+  const text = msg?.text || "Unable to load history.";
+  historyLoaded = false;
+  historyRequestedOnce = false;
+  renderHistoryPlaceholder(text);
+}
+
+async function loadHistoryForActiveTab() {
+  if (!historyContainer) {
+    return;
+  }
+  if (historyLoaded || latestHistoryRequestId) {
+    return;
+  }
+  if (!ensureBgPort()) {
+    renderHistoryPlaceholder("Background page not connected; cannot load history.");
+    return;
+  }
+
+  renderHistoryPlaceholder("Loading history...");
+
+  let tab = null;
+  try {
+    tab = await queryActiveTab();
+  } catch (err) {
+    console.error("Failed to query active tab for history:", err);
+  }
+
+  if (!tab || typeof tab.id !== "number") {
+    renderHistoryPlaceholder("No history found for the current tab.");
+    return;
+  }
+
+  const requestId = `history-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  latestHistoryRequestId = requestId;
+  pendingHistoryRequests.set(requestId, { tabId: tab.id });
+  historyRequestedOnce = true;
+
+  try {
+    bgPort.postMessage({
+      type: MESSAGE_TYPES.REQUEST_TAB_HISTORY,
+      requestId,
+      tabId: tab.id,
+      tabTitle: typeof tab.title === "string" ? tab.title : null,
+      includeTranscripts: true,
+      limit: 50,
+    });
+  } catch (err) {
+    pendingHistoryRequests.delete(requestId);
+    latestHistoryRequestId = null;
+    console.error("Failed to request history:", err);
+    renderHistoryPlaceholder("Unable to request history from background.");
+    historyLoaded = false;
+    historyRequestedOnce = false;
+  }
 }
 
 function requestAudioFromHost(audioPath, tabTitle, onSuccess, onFailure) {

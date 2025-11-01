@@ -14,6 +14,7 @@ import whisper
 from whisper_host_utils import (
     open_recordings_folder,
     open_specific_folder,
+    load_history_entries,
     transcribe_audio_chunk,
 )
 
@@ -165,6 +166,39 @@ while True:
             error_text = f"Failed to open saved folder: {exc}"
             logger.exception("Unable to open requested folder: %s", folder_path)
             send_message({"type": "error", "text": error_text})
+        continue
+
+    if command == "load-tab-history":
+        request_id = msg.get("requestId")
+        tab_uuid = msg.get("tabUUID")
+        output_dir = msg.get("outputDir", "recordings")
+        limit = msg.get("limit")
+        include_transcripts = msg.get("includeTranscripts", True)
+        try:
+            entries = load_history_entries(
+                tab_uuid=tab_uuid,
+                output_dir=output_dir,
+                limit=limit,
+                include_transcripts=include_transcripts,
+            )
+            send_message(
+                {
+                    "type": "tab-history-result",
+                    "requestId": request_id,
+                    "tabUUID": tab_uuid,
+                    "entries": entries,
+                }
+            )
+        except Exception as exc:
+            logger.exception("Unable to load tab history for %s", tab_uuid)
+            send_message(
+                {
+                    "type": "tab-history-error",
+                    "requestId": request_id,
+                    "tabUUID": tab_uuid,
+                    "text": f"Unable to load tab history: {exc}",
+                }
+            )
         continue
 
     if command == "load-audio-file":

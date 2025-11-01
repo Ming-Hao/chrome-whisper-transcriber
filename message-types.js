@@ -14,11 +14,13 @@ export const MESSAGE_TYPES = Object.freeze({
   RECORDING_STARTED: "recording-started",
   RECORDING_STATUS: "recording-status",
   RECORDING_STOPPED: "recording-stopped",
+  REQUEST_TAB_HISTORY: "request-tab-history",
   REQUEST_AUDIO_PLAYBACK: "request-audio-playback",
   RESULT: "result",
   START_RECORDING: "start-recording",
   STATUS: "status",
+  TAB_HISTORY_ERROR: "tab-history-error",
+  TAB_HISTORY_RESULT: "tab-history-result",
   STOP_RECORDING: "stop-recording",
   WARN: "warn",
 });
-

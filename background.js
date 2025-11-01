@@ -6,6 +6,7 @@ let nativePort = null;
 let hostReady = false; // becomes true on first host message
 const popupPorts = new Set();
 const audioRequestMap = new Map();
+const historyRequestMap = new Map();
 const tabUUIDs = new Map();
 
 const BADGE = {
@@ -169,6 +170,26 @@ function ensureNativePort() {
   }
 
   nativePort.onMessage.addListener((msg) => {
+    if (msg?.type === MESSAGE_TYPES.TAB_HISTORY_RESULT || msg?.type === MESSAGE_TYPES.TAB_HISTORY_ERROR) {
+      const requestId = msg?.requestId || null;
+      const pending = requestId ? historyRequestMap.get(requestId) : null;
+      const targetPort = pending?.port || null;
+      if (targetPort) {
+        try {
+          targetPort.postMessage(msg);
+        } catch (_) {
+          // ignore send failure
+          broadcast(msg);
+        }
+      } else {
+        broadcast(msg);
+      }
+      if (requestId) {
+        historyRequestMap.delete(requestId);
+      }
+      return;
+    }
+
     if (msg?.type === MESSAGE_TYPES.AUDIO_FILE || msg?.type === MESSAGE_TYPES.AUDIO_FILE_ERROR) {
       const requestId = msg?.requestId || null;
       const pending = requestId ? audioRequestMap.get(requestId) : null;
@@ -212,6 +233,20 @@ function ensureNativePort() {
     broadcast({ type: MESSAGE_TYPES.ERROR, text: "Native host disconnected" });
     nativePort = null;
     hostReady = false;
+    for (const [requestId, info] of historyRequestMap.entries()) {
+      if (info?.port) {
+        try {
+          info.port.postMessage({
+            type: MESSAGE_TYPES.TAB_HISTORY_ERROR,
+            requestId,
+            text: "Native host disconnected; unable to load history.",
+          });
+        } catch (_) {
+          // ignore send failure
+        }
+      }
+    }
+    historyRequestMap.clear();
     if (recordingState.status === "recording" || recordingState.status === "starting") {
       broadcast({ type: MESSAGE_TYPES.WARN, text: "Recording continued without native host connection." });
     }
@@ -507,6 +542,48 @@ chrome.runtime.onConnect.addListener((port) => {
       return;
     }
 
+    if (msg.type === MESSAGE_TYPES.REQUEST_TAB_HISTORY) {
+      const tabId = typeof msg.tabId === "number" ? msg.tabId : null;
+      let tabUUID = null;
+      if (typeof msg.tabUUID === "string" && msg.tabUUID) {
+        tabUUID = msg.tabUUID;
+      } else if (tabId !== null) {
+        tabUUID = ensureTabUUID(tabId);
+      }
+
+      const np = ensureNativePort();
+      if (!np) {
+        port.postMessage({ type: MESSAGE_TYPES.ERROR, text: "Native host unavailable for history request." });
+        return;
+      }
+
+      const requestId = msg.requestId || `history-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      historyRequestMap.set(requestId, { port });
+
+      const payload = {
+        command: "load-tab-history",
+        requestId,
+        tabUUID: tabUUID || null,
+        tabId,
+        tabTitle: typeof msg.tabTitle === "string" ? msg.tabTitle : null,
+        includeTranscripts: msg.includeTranscripts !== false,
+      };
+      if (typeof msg.limit === "number" && msg.limit > 0) {
+        payload.limit = msg.limit;
+      }
+      if (typeof msg.outputDir === "string" && msg.outputDir) {
+        payload.outputDir = msg.outputDir;
+      }
+
+      try {
+        np.postMessage(payload);
+      } catch (err) {
+        historyRequestMap.delete(requestId);
+        port.postMessage({ type: MESSAGE_TYPES.ERROR, text: "Failed to request history: " + (err?.message || err) });
+      }
+      return;
+    }
+
     if (msg.type === MESSAGE_TYPES.REQUEST_AUDIO_PLAYBACK) {
       const { requestId, audioPath } = msg;
       if (typeof audioPath !== "string" || !audioPath) {
@@ -543,6 +620,11 @@ chrome.runtime.onConnect.addListener((port) => {
     for (const [requestId, info] of audioRequestMap.entries()) {
       if (info.port === port) {
         audioRequestMap.delete(requestId);
+      }
+    }
+    for (const [requestId, info] of historyRequestMap.entries()) {
+      if (info.port === port) {
+        historyRequestMap.delete(requestId);
       }
     }
   });
