@@ -24,11 +24,17 @@ Originally made to help me quickly see raw Japanese lines while watching anime, 
 
 ### 1. Use Python 3.10 (Required)
 
-Whisper and PyTorch are **not compatible with Python 3.13** at the time of writing.
-
+#### macOS / Linux
 ```bash
 python3.10 -m venv venv
 source venv/bin/activate
+pip install -r requirements.txt
+```
+
+#### Windows
+```cmd
+python -m venv venv
+.\venv\Scripts\Activate.ps1 
 pip install -r requirements.txt
 ```
 
@@ -40,6 +46,23 @@ Chrome requires a JSON file to register native messaging hosts. You must copy an
 ```
 ~/Library/Application Support/Google/Chrome/NativeMessagingHosts/com.example.chrome_whisper_transcriber.json
 ```
+#### On Windows (Edge / Chrome)
+For Windows, you need to register the native messaging host in the system registry.
+
+1. Open **Registry Editor** (`regedit.exe`).
+2. Navigate to the key:
+   ```
+   HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Edge\NativeMessagingHosts
+   ```
+   *(For Chrome, use `HKEY_LOCAL_MACHINE\SOFTWARE\Google\Chrome\NativeMessagingHosts` instead.)*
+3. Create a new key named:
+   ```
+   com.example.chrome_whisper_transcriber
+   ```
+4. Set the **default value** of this key to the full path of your JSON file, for example:
+   ```
+   C:\path\to\your\project\com.example.chrome_whisper_transcriber_win.json
+   ```
 
 #### Steps:
 
@@ -65,6 +88,15 @@ Then **edit the following fields in the JSON file**:
 
 - `"path"`: Set this to the **absolute path** of your `whisper_host.command` file. Do **not** use `~` or `$HOME`.
 - `"allowed_origins"`: Replace `<your-extension-id>` with your actual extension ID, which you can find in `chrome://extensions/`.
+
+#### Notes for Windows
+On Windows, set the `path` to point to the `.cmd` file instead, for example:
+```
+C:\path\to\your\project\whisper_host.cmd
+```
+
+If you use a `.ps1` PowerShell script, it may not execute properly — Windows often opens `.ps1` files with Notepad by default instead of running them with PowerShell.  
+To ensure correct behavior, use a `.cmd` file (which can internally call PowerShell if needed).
 
 ---
 
@@ -96,7 +128,7 @@ Then **edit the following fields in the JSON file**:
 
 ## Requirements
 
-- Python 3.10
+- Python 3.10 or higher
 - Google Chrome (or any Chromium-based browser)
 - Whisper model (`openai-whisper`), installed via pip
 
@@ -119,7 +151,8 @@ Then **edit the following fields in the JSON file**:
 ├── tests/
 │   └── test_whisper_host_utils.py                # Unit tests for host utilities
 ├── recordings/                                   # Runtime output (audio + transcript bundles)
-├── whisper_host.command                          # Shell launcher for the host
+├── whisper_host.command (mac)                    # Shell launcher for the host
+├── whisper_host.cmd (win)                        # Shell launcher for the host
 ├── com.example.chrome_whisper_transcriber.json   # Sample native messaging config
 ├── requirements.txt
 └── README.md
