@@ -245,6 +245,8 @@ while True:
                 msg.get("saveToDisk", True),
             )
 
+            # logger info log the msg data
+            logger.info("Transcription message data: %s", {k: v for k, v in msg.items() if k != "audioChunk"})
             text, saved_paths = transcribe_audio_chunk(
                 audio_chunk,
                 model,

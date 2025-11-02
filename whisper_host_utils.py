@@ -74,7 +74,7 @@ def save_recording_bundle(
         tab_root = output_dir_path
     tab_root.mkdir(parents=True, exist_ok=True)
 
-    timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     token = uuid.uuid4().hex[:6]
     prefix = _build_folder_prefix(tab_title)
     folder_path = tab_root / f"{prefix}-{timestamp}-{token}"
@@ -97,7 +97,7 @@ def save_recording_bundle(
             "lastTabId": tab_id,
             "lastTitle": tab_title,
             "lastURL": tab_url,
-            "updatedAt": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+            "updatedAt": datetime.now().isoformat(timespec="seconds") + "Z",
             "lastRecordingFolder": str(folder_path),
         }
         metadata_path = tab_root / "tab.json"
@@ -105,7 +105,7 @@ def save_recording_bundle(
             json.dump(metadata, f, ensure_ascii=False, indent=2)
 
     history_entry = {
-        "createdAt": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "createdAt": datetime.now().isoformat(timespec="seconds") + "Z",
         "folder": str(folder_path),
         "audio": str(audio_path),
         "text": str(text_path),
