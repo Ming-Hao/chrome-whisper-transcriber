@@ -618,7 +618,37 @@ function appendLogLine(text, type, extraInfo = {}) {
       savedPaths,
       tabTitle: extraInfo?.tabTitle || null,
     });
-    controls.forEach((control) => line.appendChild(control));
+    let copyControl = null;
+    controls.forEach((control) => {
+      if (!copyControl && control instanceof HTMLElement && control.classList.contains("copy-icon-btn")) {
+        copyControl = control;
+      }
+      line.appendChild(control);
+    });
+
+    if (copyControl) {
+      line.addEventListener("dblclick", (event) => {
+        if (event.target instanceof HTMLElement && event.target.closest("button")) {
+          return;
+        }
+        const selection = window.getSelection();
+        if (selection) {
+          selection.removeAllRanges();
+          const range = document.createRange();
+          const textNode = span.firstChild;
+          const rawText = typeof textNode?.textContent === "string" ? textNode.textContent : "";
+          const markerIndex = rawText.indexOf("] ");
+          const startOffset = markerIndex >= 0 ? markerIndex + 2 : 0;
+          const endOffset = rawText.length;
+          if (textNode && startOffset < endOffset) {
+            range.setStart(textNode, startOffset);
+            range.setEnd(textNode, endOffset);
+            selection.addRange(range);
+          }
+        }
+        copyControl.click();
+      });
+    }
   }
 
   logElement.prepend(line);
@@ -683,8 +713,37 @@ function renderHistoryEntries(entries) {
       savedPaths,
       tabTitle: entry?.tabTitle || null,
     });
-    controls.forEach((control) => actions.appendChild(control));
+    let copyControl = null;
+    controls.forEach((control) => {
+      if (!copyControl && control instanceof HTMLElement && control.classList.contains("copy-icon-btn")) {
+        copyControl = control;
+      }
+      actions.appendChild(control);
+    });
     item.appendChild(actions);
+
+    if (copyControl) {
+      item.addEventListener("dblclick", (event) => {
+        if (event.target instanceof HTMLElement && event.target.closest("button")) {
+          return;
+        }
+        const selection = window.getSelection();
+        if (selection) {
+          selection.removeAllRanges();
+          const range = document.createRange();
+          const textNode = content.firstChild;
+          if (textNode && textNode.textContent?.length) {
+            range.setStart(textNode, 0);
+            range.setEnd(textNode, textNode.textContent.length);
+            selection.addRange(range);
+          } else {
+            range.selectNodeContents(content);
+            selection.addRange(range);
+          }
+        }
+        copyControl.click();
+      });
+    }
 
     historyContainer.appendChild(item);
   });
