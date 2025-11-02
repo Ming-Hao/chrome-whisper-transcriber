@@ -30,11 +30,11 @@ function applyPaneState(pane, toggle, collapsed) {
   if (collapsed) {
     pane.classList.add("collapsed");
     toggle.setAttribute("aria-expanded", "false");
-    toggle.textContent = "+";
+    toggle.textContent = "▶"; // Unicode U+25B6
   } else {
     pane.classList.remove("collapsed");
     toggle.setAttribute("aria-expanded", "true");
-    toggle.textContent = "−";
+    toggle.textContent = "▼"; // Unicode U+25BC
   }
 }
 
