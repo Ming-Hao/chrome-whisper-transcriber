@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Recordings Viewer</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+    }
+
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans TC", Arial, "Helvetica Neue", sans-serif;
+      margin: 24px;
+    }
+
+    header {
+      margin-bottom: 16px;
+    }
+
+    .status {
+      font-size: 14px;
+      opacity: 0.8;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+    }
+
+    .row {
+      border: 1px solid #ddd;
+      border-radius: 12px;
+      padding: 12px;
+    }
+
+    .row-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+
+    .row-header .uuid {
+      order: -1;
+    }
+
+    .row h3 {
+      margin: 0;
+      font-size: 16px;
+      flex: 1;
+    }
+
+    .controls {
+      display: flex;
+      gap: 16px;
+      align-items: flex-start;
+    }
+
+    .controls audio {
+      flex: 0 0 auto;
+      height: 32px;
+      width: 280px;
+      margin-top: 2px;
+    }
+
+    .transcript {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .transcript textarea {
+      width: 100%;
+      min-height: 140px;
+      font-family: inherit;
+      font-size: 13px;
+      line-height: 1.6;
+      padding: 8px;
+      border-radius: 8px;
+      border: 1px solid #ccc;
+      box-sizing: border-box;
+      resize: vertical;
+    }
+
+    .transcript .actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .btn {
+      font-size: 12px;
+      padding: 4px 10px;
+      border-radius: 8px;
+      border: 1px solid #999;
+      background: rgba(0,0,0,0.04);
+      cursor: pointer;
+      transition: background 0.15s ease;
+    }
+
+    .btn:hover:not(:disabled) {
+      background: rgba(0,0,0,0.1);
+    }
+
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .btn.primary {
+      background: #2563eb;
+      color: #fff;
+      border-color: #2563eb;
+    }
+
+    .btn.primary:hover:not(:disabled) {
+      background: #1d4ed8;
+    }
+
+    .pill {
+      font-size: 12px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid #bbb;
+    }
+
+    .uuid {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    }
+
+    .txt {
+      margin: 0;
+      font-size: 13px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      padding: 4px 6px;
+      background: rgba(0,0,0,0.04);
+      border-radius: 8px;
+    }
+
+    .error {
+      color: #b00020;
+      font-size: 13px;
+    }
+
+    .muted {
+      opacity: 0.75;
+    }
+
+    .hide {
+      display: none;
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    input[type="search"] {
+      padding: 6px 10px;
+      border-radius: 8px;
+      border: 1px solid #ccc;
+      min-width: 240px;
+    }
+
+    .badge {
+      padding: 2px 6px;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Recordings Viewer</h1>
+    <div class="status" id="status">Initializing...</div>
+  </header>
+
+  <div class="toolbar">
+    <input id="q" type="search" placeholder="Filter by title, URL, path..." />
+    <span class="badge" id="countBadge"></span>
+  </div>
+
+  <section class="grid" id="list"></section>
+
+  <template id="row-tpl">
+    <article class="row">
+      <div class="row-header">
+        <span class="pill uuid"></span>
+        <h3 class="title"></h3>
+      </div>
+      <div class="controls">
+        <audio class="audio" controls preload="metadata"></audio>
+        <div class="transcript">
+          <pre class="txt muted">(Loading...)</pre>
+          <textarea class="txt-editor hide" spellcheck="false"></textarea>
+          <div class="actions">
+            <button type="button" class="btn edit-btn">Edit</button>
+            <button type="button" class="btn primary save-btn hide">Save</button>
+            <button type="button" class="btn cancel-btn hide">Cancel</button>
+          </div>
+        </div>
+      </div>
+      <div class="error hide"></div>
+    </article>
+  </template>
+
+  <script>
+    const ROOT_PREFIX = "";
+    function toViewerPath(path) {
+      if (!path) return path;
+      if (/^(?:[a-z]+:|\/\/|\/)/i.test(path)) return path; // absolute path or https
+      if (path.startsWith("../") || path.startsWith("./")) return path;
+      return ROOT_PREFIX + path;
+    }
+    // Helper to append cache-busting query param to URL
+    function withCacheBust(u) {
+      try {
+        const url = new URL(u, location.href);
+        url.searchParams.set("_ts", String(Date.now()));
+        return url.toString();
+      } catch {
+        const sep = u.includes("?") ? "&" : "?";
+        return u + sep + "_ts=" + Date.now();
+      }
+    }
+
+    // Fetch helper with graceful text fallback, uses cache-busting param
+    async function getText(url) {
+      // Bust caches via query string to avoid fetch cache mode incompatibilities
+      let res;
+      try {
+        res = await fetch(withCacheBust(url));
+      } catch (err) {
+        throw new Error(`Failed to fetch ${url}. The file may be missing or blocked by CORS: ${err.message}`);
+      }
+      if (!res.ok) throw new Error("HTTP " + res.status + " for " + url);
+      return await res.text();
+    }
+
+    // Try to get UUID list via recordings/index.json; fallback to scraping directory index HTML.
+    async function listUUIDs() {
+      // Live Server directory index: parse anchors from /recordings/
+      const html = await getText(toViewerPath("recordings/"));
+      // Parse <a href="uuid/"> entries
+      const doc = new DOMParser().parseFromString(html, "text/html");
+      const anchors = Array.from(doc.querySelectorAll("a[href]"));
+      const uuids = anchors
+        .map(a => a.getAttribute("href") || "")
+        .filter(href => href.endsWith("/") &&
+                        !href.startsWith("../") &&
+                        !href.startsWith("./") &&
+                        !href.startsWith("/") )
+        .map(href => href.replace(/\/$/, ""))
+        .filter(name => name && name !== "." && !name.includes("/") && !name.includes("\\"));
+
+      // Filter out obvious non-UUIDs (keep len>=8, allow any folder actually)
+      const unique = Array.from(new Set(uuids));
+      if (!unique.length) {
+        throw new Error("No subfolders found under recordings/ (or the server does not expose a directory index).");
+      }
+      return unique;
+    }
+
+    // Parse JSONL text to array of objects
+    function parseJSONL(text) {
+      const lines = text.split(/\r?\n/).filter(Boolean);
+      const out = [];
+      for (const line of lines) {
+        try { out.push(JSON.parse(line)); }
+        catch (e) { /* skip bad line */ }
+      }
+      return out;
+    }
+
+    async function updateTranscriptOnServer(rec, textPath, newText) {
+      const cleanPath = textPath.startsWith("recordings/") ? textPath : `recordings/${textPath}`;
+      const encodedPath = cleanPath
+        .split("/")
+        .map(segment => segment ? encodeURIComponent(segment) : segment)
+        .join("/");
+      const apiUrl = toViewerPath(`api/transcripts/${encodedPath}`);
+      let res;
+      try {
+        res = await fetch(apiUrl, {
+          method: "PUT",
+          headers: { "Content-Type": "text/plain;charset=utf-8" },
+          body: newText,
+        });
+      } catch (err) {
+        throw new Error("Network error: " + err.message);
+      }
+      if (!res.ok) {
+        let message = res.statusText;
+        try {
+          const txt = await res.text();
+          if (txt) message = txt;
+        } catch { /* ignore */ }
+        throw new Error(message || `HTTP ${res.status}`);
+      }
+      return {};
+    }
+
+    // Build a row in DOM from one record
+    function buildRow(rec) {
+      const tpl = document.getElementById("row-tpl");
+      const node = tpl.content.firstElementChild.cloneNode(true);
+      const errBox = node.querySelector(".error");
+
+      function setRowMessage(message, kind) {
+        if (!message) {
+          if (!kind || errBox.dataset.kind === kind) {
+            errBox.textContent = "";
+            errBox.classList.add("hide");
+            delete errBox.dataset.kind;
+          }
+          return;
+        }
+        errBox.textContent = message;
+        errBox.classList.remove("hide");
+        if (kind) errBox.dataset.kind = kind;
+      }
+
+      // Derive folder/audio/text paths when missing
+      const folder = rec.folder || (rec.audio ? rec.audio.replace(/\/[^/]+$/, "") : (rec.text ? rec.text.replace(/\/[^/]+$/, "") : null));
+      const audioPath = rec.audio || (folder ? folder + "/audio.webm" : null);
+      const textPath = rec.text || (folder ? folder + "/transcript.txt" : (rec.audio ? rec.audio.replace(/audio\.webm$/, "transcript.txt") : null));
+
+      // Title + link
+      const h = node.querySelector(".title");
+      if (rec.tabURL) {
+        const a = document.createElement("a");
+        a.href = rec.tabURL;
+        a.textContent = rec.tabTitle || rec.tabURL;
+        a.target = "_blank";
+        a.rel = "noreferrer";
+        h.appendChild(a);
+      } else {
+        h.textContent = rec.tabTitle || "(No title)";
+      }
+
+      // Audio
+      const audioEl = node.querySelector(".audio");
+      if (audioPath) {
+        const audioFetchPath = toViewerPath(audioPath);
+        audioEl.src = audioFetchPath;
+        audioEl.addEventListener("error", () => {
+          setRowMessage("Failed to load audio. Please verify the file path: " + (audioPath || "(missing)"), "audio");
+        });
+      } else {
+        audioEl.replaceWith(Object.assign(document.createElement("div"), { textContent: "No audio", className: "muted" }));
+      }
+
+      // UUID pill
+      const uuidEl = node.querySelector(".uuid");
+      uuidEl.textContent = rec.tabUUID || "(unknown uuid)";
+
+      // Transcript UI
+      const transcriptBox = node.querySelector(".transcript");
+      const pre = transcriptBox.querySelector("pre.txt");
+      const textarea = transcriptBox.querySelector("textarea.txt-editor");
+      const editBtn = transcriptBox.querySelector(".edit-btn");
+      const saveBtn = transcriptBox.querySelector(".save-btn");
+      const cancelBtn = transcriptBox.querySelector(".cancel-btn");
+
+      let transcriptText = typeof rec.transcriptOverride === "string" ? rec.transcriptOverride : null;
+
+      function renderTranscript(txt) {
+        transcriptText = txt;
+        const display = txt ? txt : "(empty)";
+        pre.textContent = display;
+        textarea.value = txt || "";
+        pre.classList.remove("muted");
+        editBtn.disabled = false;
+        saveBtn.disabled = false;
+        cancelBtn.disabled = false;
+      }
+
+      function showTranscriptError(msg) {
+        pre.textContent = msg;
+        pre.classList.remove("muted");
+        editBtn.disabled = true;
+        saveBtn.disabled = true;
+        cancelBtn.disabled = true;
+      }
+
+      function setEditingMode(editing) {
+        if (editing) {
+          editBtn.disabled = true;
+          saveBtn.disabled = false;
+          cancelBtn.disabled = false;
+          textarea.classList.remove("hide");
+          pre.classList.add("hide");
+          editBtn.classList.add("hide");
+          saveBtn.classList.remove("hide");
+          cancelBtn.classList.remove("hide");
+          textarea.focus();
+          textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+        } else {
+          editBtn.disabled = false;
+          saveBtn.disabled = false;
+          cancelBtn.disabled = false;
+          textarea.classList.add("hide");
+          pre.classList.remove("hide");
+          editBtn.classList.remove("hide");
+          saveBtn.classList.add("hide");
+          cancelBtn.classList.add("hide");
+        }
+      }
+
+      if (!textPath) {
+        showTranscriptError("(Transcript path missing)");
+      } else if (transcriptText !== null) {
+        renderTranscript(transcriptText);
+      } else {
+        editBtn.disabled = true;
+        saveBtn.disabled = true;
+        cancelBtn.disabled = true;
+        const transcriptFetchPath = toViewerPath(textPath);
+        (async () => {
+          try {
+            const txt = await getText(transcriptFetchPath);
+            renderTranscript(txt);
+          } catch (e) {
+            showTranscriptError("Failed to load transcript: " + e.message);
+          }
+        })();
+      }
+
+      if (!textPath) {
+        editBtn.disabled = true;
+      } else {
+        editBtn.addEventListener("click", () => {
+          textarea.value = transcriptText || "";
+          setEditingMode(true);
+          setRowMessage("", "edit");
+        });
+
+        cancelBtn.addEventListener("click", () => {
+          textarea.value = transcriptText || "";
+          setEditingMode(false);
+          setRowMessage("", "edit");
+        });
+
+        saveBtn.addEventListener("click", async () => {
+          const newText = textarea.value;
+          if (newText === (transcriptText || "")) {
+            setEditingMode(false);
+            return;
+          }
+          saveBtn.disabled = true;
+          cancelBtn.disabled = true;
+          saveBtn.textContent = "Saving...";
+          try {
+            await updateTranscriptOnServer(rec, textPath, newText);
+            renderTranscript(newText);
+            rec.transcriptOverride = newText;
+            rec.transcriptEditedAt = new Date().toISOString();
+            setEditingMode(false);
+            setRowMessage("", "edit");
+          } catch (err) {
+            setRowMessage("Failed to save transcript: " + err.message, "edit");
+            saveBtn.disabled = false;
+            cancelBtn.disabled = false;
+            saveBtn.textContent = "Save";
+            return;
+          }
+          saveBtn.disabled = false;
+          cancelBtn.disabled = false;
+          saveBtn.textContent = "Save";
+          editBtn.disabled = false;
+        });
+      }
+
+      // Quick check: show warning if paths look missing
+      // Note: We do not preflight fetch here to avoid N fetches; errors surface when user plays/opens.
+      if (!rec.audio && !rec.text) {
+        setRowMessage("Missing both audio and transcript paths for this record.", "missing");
+      }
+
+      return node;
+    }
+
+    // Render list with optional text filter
+    function render(records) {
+      const list = document.getElementById("list");
+      list.innerHTML = "";
+      for (const rec of records) {
+        list.appendChild(buildRow(rec));
+      }
+      document.getElementById("countBadge").textContent = `Count: ${records.length}`;
+    }
+
+    // Text filter function over fields
+    function matches(rec, q) {
+      if (!q) return true;
+      const hay = [
+        rec.tabTitle, rec.tabURL, rec.audio, rec.text, rec.folder, rec.tabUUID, rec.createdAt
+      ].filter(Boolean).join(" ").toLowerCase();
+      return hay.includes(q.toLowerCase());
+    }
+
+    // Main
+    (async function main() {
+      const status = document.getElementById("status");
+      status.textContent = "Scanning recordings/...";
+
+      try {
+        // If URL has ?uuid=XXX, only load that one
+        const url = new URL(location.href);
+        const only = url.searchParams.get("uuid");
+
+        let uuids = [];
+        if (only) {
+          uuids = [only];
+        } else {
+          uuids = await listUUIDs();
+        }
+
+        status.textContent = `Found ${uuids.length} folders. Loading history.jsonl...`;
+
+        // Fetch histories for each uuid (in parallel but with soft control)
+        const allRecords = [];
+        await Promise.all(uuids.map(async (u) => {
+          const url = `recordings/${encodeURIComponent(u)}/history.jsonl`;
+          const fetchUrl = toViewerPath(url);
+          try {
+            const text = await getText(fetchUrl);
+            const arr = parseJSONL(text);
+            // Keep original order; or sort by createdAt later
+            allRecords.push(...arr);
+          } catch (e) {
+            console.warn("Failed to read", url, e);
+          }
+        }));
+
+        // Sort newest first if createdAt exists
+        allRecords.sort((a, b) => {
+          const ta = Date.parse(a.createdAt || 0);
+          const tb = Date.parse(b.createdAt || 0);
+          return isNaN(tb - ta) ? 0 : (tb - ta);
+        });
+
+        render(allRecords);
+
+        status.textContent = `Loaded ${allRecords.length} records. Refresh the page to rescan.`;
+
+        // Wire up search filter
+        const input = document.getElementById("q");
+        input.addEventListener("input", () => {
+          const q = input.value.trim();
+          const filtered = allRecords.filter(r => matches(r, q));
+          render(filtered);
+        });
+
+      } catch (e) {
+        status.textContent = "Failed to load: " + e.message;
+      }
+    })();
+  </script>
+</body>
+</html>
