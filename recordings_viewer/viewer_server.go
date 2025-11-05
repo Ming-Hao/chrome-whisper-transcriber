@@ -6,7 +6,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 )
@@ -17,9 +19,20 @@ type transcript struct {
 }
 
 var (
-	baseDir = filepath.Clean("../recordings") // Adjust to match actual recordings directory
+	baseDir string
 	mu      sync.Mutex
 )
+
+func init() {
+	// Resolve recordings directory relative to the viewer_server source file.
+	_, srcFile, _, ok := runtime.Caller(0)
+	if !ok {
+		log.Fatal("could not resolve viewer_server.go path")
+	}
+	viewerDir := filepath.Dir(srcFile)
+	baseDir = filepath.Clean(filepath.Join(viewerDir, "..", "recordings"))
+	log.Printf("recordings directory: %s", baseDir)
+}
 
 func main() {
 	mux := http.NewServeMux()
@@ -28,13 +41,14 @@ func main() {
 		mux.Handle("/", http.FileServer(http.Dir(".")))
 
 		// Expose recordings directory so the UI can read audio/transcripts
-		mux.Handle("/recordings/", http.StripPrefix(
-			"/recordings/",
-			http.FileServer(http.Dir(baseDir)),
+	mux.Handle("/recordings/", http.StripPrefix(
+		"/recordings/",
+		http.FileServer(http.Dir(baseDir)),
 	))
 
 	mux.HandleFunc("/api/transcripts", listTranscripts)
 	mux.HandleFunc("/api/transcripts/", transcriptHandler)
+	mux.HandleFunc("/api/open-folder", openFolderHandler)
 
 	log.Println("server listening on :8080")
 	log.Fatal(http.ListenAndServe(":8080", mux))
@@ -104,5 +118,73 @@ func transcriptHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func openFolderHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var payload struct {
+		Path string `json:"path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		return
+	}
+	path := strings.TrimSpace(payload.Path)
+	if path == "" {
+		http.Error(w, "path is required", http.StatusBadRequest)
+		return
+	}
+
+	path = strings.TrimPrefix(path, "recordings/")
+	path = filepath.Clean(path)
+	if filepath.IsAbs(path) {
+		http.Error(w, "invalid path", http.StatusBadRequest)
+		return
+	}
+	if path == "." || strings.HasPrefix(path, "..") {
+		http.Error(w, "invalid path", http.StatusBadRequest)
+		return
+	}
+
+	target := filepath.Join(baseDir, path)
+	info, err := os.Stat(target)
+	if err != nil {
+		http.Error(w, "folder not found", http.StatusNotFound)
+		return
+	}
+	if !info.IsDir() {
+		http.Error(w, "path is not a directory", http.StatusBadRequest)
+		return
+	}
+
+	cmdName, args := openerCommand(target)
+	if cmdName == "" {
+		http.Error(w, "open-folder not supported on this platform", http.StatusNotImplemented)
+		return
+	}
+
+	cmd := exec.Command(cmdName, args...)
+	if err := cmd.Start(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func openerCommand(path string) (string, []string) {
+	switch runtime.GOOS {
+	case "darwin":
+		return "open", []string{path}
+	case "windows":
+		return "explorer", []string{path}
+	case "linux":
+		return "xdg-open", []string{path}
+	default:
+		return "", nil
 	}
 }

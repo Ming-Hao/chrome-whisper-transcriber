@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="icon" href="data:,">
   <title>Recordings Viewer</title>
   <style>
     :root {
@@ -16,6 +17,8 @@
 
     header {
       margin-bottom: 16px;
+      cursor: default;
+      user-select: none;
     }
 
     .status {
@@ -40,10 +43,6 @@
       align-items: center;
       gap: 8px;
       margin-bottom: 6px;
-    }
-
-    .row-header .uuid {
-      order: -1;
     }
 
     .row h3 {
@@ -74,13 +73,17 @@
       width: 100%;
       min-height: 140px;
       font-family: inherit;
-      font-size: 13px;
+      font-size: 14px;
       line-height: 1.6;
       padding: 8px;
       border-radius: 8px;
       border: 1px solid #ccc;
       box-sizing: border-box;
       resize: vertical;
+    }
+
+    .transcript .txt {
+      font-size: 14px;
     }
 
     .transcript .actions {
@@ -99,6 +102,11 @@
       transition: background 0.15s ease;
     }
 
+    .transcript .actions .btn {
+      font-size: 14px;
+      padding: 6px 14px;
+    }
+
     .btn:hover:not(:disabled) {
       background: rgba(0,0,0,0.1);
     }
@@ -109,13 +117,29 @@
     }
 
     .btn.primary {
-      background: #2563eb;
+      background: #3b82f6;
       color: #fff;
-      border-color: #2563eb;
+      border-color: #3b82f6;
     }
 
     .btn.primary:hover:not(:disabled) {
-      background: #1d4ed8;
+      background: #60a5fa;
+    }
+
+    .edit-btn:hover:not(:disabled) {
+      border-color: #bae6fd;
+      background: rgba(59, 130, 246, 0.08);
+      color: #3b82f6;
+    }
+
+    .save-btn:hover:not(:disabled) {
+      box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+    }
+
+    .cancel-btn:hover:not(:disabled) {
+      border-color: #dc2626;
+      background: rgba(220, 38, 38, 0.12);
+      color: #b91c1c;
     }
 
     .pill {
@@ -164,6 +188,13 @@
       border-radius: 8px;
       border: 1px solid #ccc;
       min-width: 240px;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+    }
+
+    input[type="search"]:hover {
+      border-color: #3b82f6;
+      background-color: rgba(59, 130, 246, 0.08);
+      box-shadow: 0 2px 6px rgba(59, 130, 246, 0.15);
     }
 
     .badge {
@@ -171,6 +202,51 @@
       border: 1px solid #ccc;
       border-radius: 8px;
       font-size: 12px;
+      cursor: default;
+      user-select: none;
+    }
+
+    .open-folder-header-btn {
+      font-size: 12px;
+      padding: 4px 10px;
+      border-radius: 8px;
+      border: 1px solid #999;
+      background: rgba(0,0,0,0.04);
+      cursor: pointer;
+      transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    .open-folder-header-btn:hover:not(:disabled) {
+      background: rgba(59, 130, 246, 0.15);
+      border-color: #3b82f6;
+      color: #2563eb;
+      box-shadow: 0 2px 6px rgba(59, 130, 246, 0.2);
+      transform: translateY(-1px);
+    }
+
+    .info-btn {
+      font-size: 12px;
+      line-height: 1;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      border: 1px solid #999;
+      background: rgba(0,0,0,0.04);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-family: inherit;
+      padding: 0;
+      transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+    }
+
+    .info-btn:hover {
+      background: rgba(59, 130, 246, 0.15);
+      border-color: #3b82f6;
+      color: #2563eb;
+      box-shadow: 0 2px 6px rgba(59, 130, 246, 0.2);
+      transform: translateY(-1px);
     }
   </style>
 </head>
@@ -190,8 +266,9 @@
   <template id="row-tpl">
     <article class="row">
       <div class="row-header">
-        <span class="pill uuid"></span>
+        <button type="button" class="open-folder-header-btn" aria-label="Open folder">&#128193;</button>
         <h3 class="title"></h3>
+        <button type="button" class="info-btn" title="Info">i</button>
       </div>
       <div class="controls">
         <audio class="audio" controls preload="metadata"></audio>
@@ -210,12 +287,14 @@
   </template>
 
   <script>
-    const ROOT_PREFIX = "";
     function toViewerPath(path) {
       if (!path) return path;
       if (/^(?:[a-z]+:|\/\/|\/)/i.test(path)) return path; // absolute path or https
-      if (path.startsWith("../") || path.startsWith("./")) return path;
-      return ROOT_PREFIX + path;
+      try {
+        return new URL(path, location.origin + "/").toString();
+      } catch {
+        return "/" + path.replace(/^(\.\/)+/, "").replace(/^\/+/, "");
+      }
     }
     // Helper to append cache-busting query param to URL
     function withCacheBust(u) {
@@ -305,6 +384,28 @@
       return {};
     }
 
+    async function openFolderOnServer(folderPath) {
+      const url = toViewerPath("api/open-folder");
+      let res;
+      try {
+        res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path: folderPath }),
+        });
+      } catch (err) {
+        throw new Error("Network error: " + err.message);
+      }
+      if (!res.ok) {
+        let message = res.statusText || `HTTP ${res.status}`;
+        try {
+          const txt = await res.text();
+          if (txt) message = txt;
+        } catch { /* ignore */ }
+        throw new Error(message);
+      }
+    }
+
     // Build a row in DOM from one record
     function buildRow(rec) {
       const tpl = document.getElementById("row-tpl");
@@ -355,14 +456,12 @@
         audioEl.replaceWith(Object.assign(document.createElement("div"), { textContent: "No audio", className: "muted" }));
       }
 
-      // UUID pill
-      const uuidEl = node.querySelector(".uuid");
-      uuidEl.textContent = rec.tabUUID || "(unknown uuid)";
-
       // Transcript UI
       const transcriptBox = node.querySelector(".transcript");
       const pre = transcriptBox.querySelector("pre.txt");
       const textarea = transcriptBox.querySelector("textarea.txt-editor");
+      const openFolderHeaderBtn = node.querySelector(".open-folder-header-btn");
+      const infoBtn = node.querySelector(".info-btn");
       const editBtn = transcriptBox.querySelector(".edit-btn");
       const saveBtn = transcriptBox.querySelector(".save-btn");
       const cancelBtn = transcriptBox.querySelector(".cancel-btn");
@@ -480,6 +579,45 @@
       // Note: We do not preflight fetch here to avoid N fetches; errors surface when user plays/opens.
       if (!rec.audio && !rec.text) {
         setRowMessage("Missing both audio and transcript paths for this record.", "missing");
+      }
+
+      if (openFolderHeaderBtn) {
+        if (folder) {
+          openFolderHeaderBtn.setAttribute("title", folder);
+          openFolderHeaderBtn.addEventListener("click", async () => {
+            const target = folder.endsWith("/") ? folder : `${folder}/`;
+            openFolderHeaderBtn.disabled = true;
+            const prevLabel = openFolderHeaderBtn.textContent;
+            openFolderHeaderBtn.textContent = "Opening...";
+            try {
+              await openFolderOnServer(target);
+              setRowMessage("", "open-folder");
+            } catch (err) {
+              setRowMessage("Failed to open folder: " + err.message, "open-folder");
+            } finally {
+              openFolderHeaderBtn.disabled = false;
+              openFolderHeaderBtn.textContent = prevLabel;
+            }
+          });
+        } else {
+          openFolderHeaderBtn.disabled = true;
+          openFolderHeaderBtn.textContent = "No Folder";
+        }
+      }
+
+      if (infoBtn) {
+        if (rec.createdAt) {
+          let tooltip;
+          const created = new Date(rec.createdAt);
+          if (!isNaN(created.valueOf())) {
+            tooltip = `Created at : ${created.toLocaleString()}`;
+          } else {
+            tooltip = `CreatedAt: ${rec.createdAt}`;
+          }
+          infoBtn.setAttribute("title", tooltip);
+        } else {
+          infoBtn.setAttribute("title", "Created time unavailable");
+        }
       }
 
       return node;
