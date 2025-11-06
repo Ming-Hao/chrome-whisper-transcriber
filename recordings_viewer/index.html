@@ -197,6 +197,24 @@
       box-shadow: 0 2px 6px rgba(59, 130, 246, 0.15);
     }
 
+    .toolbar label {
+      font-size: 13px;
+      opacity: 0.85;
+    }
+
+    .toolbar select {
+      padding: 6px 10px;
+      border-radius: 8px;
+      border: 1px solid #ccc;
+      background-color: transparent;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+    }
+
+    .toolbar select:hover {
+      border-color: #3b82f6;
+      box-shadow: 0 2px 6px rgba(59, 130, 246, 0.15);
+    }
+
     .badge {
       padding: 2px 6px;
       border: 1px solid #ccc;
@@ -258,6 +276,11 @@
 
   <div class="toolbar">
     <input id="q" type="search" placeholder="Filter by title, URL, path..." />
+    <label for="sort">Sort:</label>
+    <select id="sort">
+      <option value="createdAt">Created Time (New → Old)</option>
+      <option value="title">Title (A → Z)</option>
+    </select>
     <span class="badge" id="countBadge"></span>
   </div>
 
@@ -623,6 +646,34 @@
       return node;
     }
 
+    function compareByCreatedDesc(a, b) {
+      const ta = Date.parse(a.createdAt || "");
+      const tb = Date.parse(b.createdAt || "");
+      const taValid = !Number.isNaN(ta);
+      const tbValid = !Number.isNaN(tb);
+      if (taValid && tbValid) return tb - ta;
+      if (taValid) return -1;
+      if (tbValid) return 1;
+      return 0;
+    }
+
+    function sortRecords(records, sortKey) {
+      const arr = records.slice();
+      if (sortKey === "title") {
+        arr.sort((a, b) => {
+          const titleA = (a.tabTitle || "").trim();
+          const titleB = (b.tabTitle || "").trim();
+          if (!titleA && titleB) return 1;
+          if (!titleB && titleA) return -1;
+          const diff = titleA.localeCompare(titleB || "", undefined, { sensitivity: "base" });
+          if (diff !== 0) return diff;
+          return compareByCreatedDesc(a, b);
+        });
+        return arr;
+      }
+      return arr.sort(compareByCreatedDesc);
+    }
+
     // Render list with optional text filter
     function render(records) {
       const list = document.getElementById("list");
@@ -646,6 +697,30 @@
     (async function main() {
       const status = document.getElementById("status");
       status.textContent = "Scanning recordings/...";
+      const input = document.getElementById("q");
+      const sortSelect = document.getElementById("sort");
+      const allRecords = [];
+      let currentQuery = "";
+      let currentSort = sortSelect ? sortSelect.value : "createdAt";
+
+      function applyFilterAndRender() {
+        const filtered = allRecords.filter(r => matches(r, currentQuery));
+        render(sortRecords(filtered, currentSort));
+      }
+
+      if (input) {
+        input.addEventListener("input", () => {
+          currentQuery = input.value.trim();
+          applyFilterAndRender();
+        });
+      }
+
+      if (sortSelect) {
+        sortSelect.addEventListener("change", () => {
+          currentSort = sortSelect.value;
+          applyFilterAndRender();
+        });
+      }
 
       try {
         // If URL has ?uuid=XXX, only load that one
@@ -662,39 +737,21 @@
         status.textContent = `Found ${uuids.length} folders. Loading history.jsonl...`;
 
         // Fetch histories for each uuid (in parallel but with soft control)
-        const allRecords = [];
         await Promise.all(uuids.map(async (u) => {
           const url = `recordings/${encodeURIComponent(u)}/history.jsonl`;
           const fetchUrl = toViewerPath(url);
           try {
             const text = await getText(fetchUrl);
             const arr = parseJSONL(text);
-            // Keep original order; or sort by createdAt later
             allRecords.push(...arr);
           } catch (e) {
             console.warn("Failed to read", url, e);
           }
         }));
 
-        // Sort newest first if createdAt exists
-        allRecords.sort((a, b) => {
-          const ta = Date.parse(a.createdAt || 0);
-          const tb = Date.parse(b.createdAt || 0);
-          return isNaN(tb - ta) ? 0 : (tb - ta);
-        });
-
-        render(allRecords);
+        applyFilterAndRender();
 
         status.textContent = `Loaded ${allRecords.length} records. Refresh the page to rescan.`;
-
-        // Wire up search filter
-        const input = document.getElementById("q");
-        input.addEventListener("input", () => {
-          const q = input.value.trim();
-          const filtered = allRecords.filter(r => matches(r, q));
-          render(filtered);
-        });
-
       } catch (e) {
         status.textContent = "Failed to load: " + e.message;
       }
