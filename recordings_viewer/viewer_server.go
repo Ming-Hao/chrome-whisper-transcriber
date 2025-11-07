@@ -19,9 +19,15 @@ type transcript struct {
 }
 
 var (
-	baseDir string
-	mu      sync.Mutex
+	baseDir           string
+	mu                sync.Mutex
+	commandFactory    = func(name string, args ...string) command { return exec.Command(name, args...) }
+	openerCommandFunc = openerCommand
 )
+
+type command interface {
+	Start() error
+}
 
 func init() {
 	// Resolve recordings directory relative to the viewer_server source file.
@@ -37,10 +43,10 @@ func init() {
 func main() {
 	mux := http.NewServeMux()
 
-		// Serve viewer static assets
-		mux.Handle("/", http.FileServer(http.Dir(".")))
+	// Serve viewer static assets
+	mux.Handle("/", http.FileServer(http.Dir(".")))
 
-		// Expose recordings directory so the UI can read audio/transcripts
+	// Expose recordings directory so the UI can read audio/transcripts
 	mux.Handle("/recordings/", http.StripPrefix(
 		"/recordings/",
 		http.FileServer(http.Dir(baseDir)),
@@ -139,6 +145,7 @@ func openFolderHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "path is required", http.StatusBadRequest)
 		return
 	}
+	log.Printf("open-folder request path: %s", path)
 
 	path = strings.TrimPrefix(path, "recordings/")
 	path = filepath.Clean(path)
@@ -162,13 +169,14 @@ func openFolderHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cmdName, args := openerCommand(target)
+	log.Printf("open-folder resolved target: %s", target)
+	cmdName, args := openerCommandFunc(target)
 	if cmdName == "" {
 		http.Error(w, "open-folder not supported on this platform", http.StatusNotImplemented)
 		return
 	}
 
-	cmd := exec.Command(cmdName, args...)
+	cmd := commandFactory(cmdName, args...)
 	if err := cmd.Start(); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
