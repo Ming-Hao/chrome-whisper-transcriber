@@ -140,6 +140,58 @@ func TestTranscriptHandlerRejectsInvalidPath(t *testing.T) {
 	}
 }
 
+func TestTranscriptHandlerPutWithRecordingsPrefix(t *testing.T) {
+    dir := useTempBaseDir(t)
+    file := "withprefix.txt"
+    content := "abc123"
+
+    req := httptest.NewRequest(http.MethodPut, "/api/transcripts/recordings/"+file, strings.NewReader(content))
+    rec := httptest.NewRecorder()
+
+    transcriptHandler(rec, req)
+
+    res := rec.Result()
+    defer res.Body.Close()
+
+    if res.StatusCode != http.StatusNoContent {
+        t.Fatalf("status=%d want %d", res.StatusCode, http.StatusNoContent)
+    }
+
+    data, err := os.ReadFile(filepath.Join(dir, file))
+    if err != nil {
+        t.Fatalf("read file: %v", err)
+    }
+    if string(data) != content {
+        t.Fatalf("file content=%q want %q", string(data), content)
+    }
+}
+
+func TestTranscriptHandlerPutWithDoubleRecordingsPrefix(t *testing.T) {
+    dir := useTempBaseDir(t)
+    file := "doubleprefix.txt"
+    content := "xyz"
+
+    req := httptest.NewRequest(http.MethodPut, "/api/transcripts/recordings/recordings/"+file, strings.NewReader(content))
+    rec := httptest.NewRecorder()
+
+    transcriptHandler(rec, req)
+
+    res := rec.Result()
+    defer res.Body.Close()
+
+    if res.StatusCode != http.StatusNoContent {
+        t.Fatalf("status=%d want %d", res.StatusCode, http.StatusNoContent)
+    }
+
+    data, err := os.ReadFile(filepath.Join(dir, file))
+    if err != nil {
+        t.Fatalf("read file: %v", err)
+    }
+    if string(data) != content {
+        t.Fatalf("file content=%q want %q", string(data), content)
+    }
+}
+
 func TestOpenFolderHandlerSuccess(t *testing.T) {
 	dir := useTempBaseDir(t)
 	target := "session"

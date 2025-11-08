@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -83,15 +84,16 @@ func transcriptHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing transcript path", http.StatusBadRequest)
 		return
 	}
-	rel = strings.TrimPrefix(rel, "recordings/")
-	rel = filepath.Clean(rel)
-	if rel == "." || strings.HasPrefix(rel, "..") {
-		http.Error(w, "invalid path", http.StatusBadRequest)
+
+	cleanRel, err := normalizeRecordingsRelative(rel)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	fullPath := filepath.Join(baseDir, rel)
+
 	baseClean := filepath.Clean(baseDir)
-	if !strings.HasPrefix(fullPath, baseClean+string(os.PathSeparator)) && fullPath != baseClean {
+	fullPath := filepath.Clean(filepath.Join(baseClean, cleanRel))
+	if !isInsideBase(fullPath, baseClean) {
 		http.Error(w, "invalid path", http.StatusBadRequest)
 		return
 	}
@@ -102,6 +104,13 @@ func transcriptHandler(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
 		log.Printf("PUT %s", rel)
+
+		// Ensure parent directory exists for nested paths
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
 		tmp := fullPath + ".tmp"
 		file, err := os.Create(tmp)
 		if err != nil {
@@ -147,18 +156,18 @@ func openFolderHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("open-folder request path: %s", path)
 
-	path = strings.TrimPrefix(path, "recordings/")
-	path = filepath.Clean(path)
-	if filepath.IsAbs(path) {
-		http.Error(w, "invalid path", http.StatusBadRequest)
-		return
-	}
-	if path == "." || strings.HasPrefix(path, "..") {
-		http.Error(w, "invalid path", http.StatusBadRequest)
+	cleanRel, err := normalizeRecordingsRelative(path)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	target := filepath.Join(baseDir, path)
+	baseClean := filepath.Clean(baseDir)
+	target := filepath.Clean(filepath.Join(baseClean, cleanRel))
+	if !isInsideBase(target, baseClean) {
+		http.Error(w, "invalid path", http.StatusBadRequest)
+		return
+	}
 	info, err := os.Stat(target)
 	if err != nil {
 		http.Error(w, "folder not found", http.StatusNotFound)
@@ -195,4 +204,47 @@ func openerCommand(path string) (string, []string) {
 	default:
 		return "", nil
 	}
+}
+
+// normalizeRecordingsRelative converts a possibly absolute or mixed-slash path into a
+// relative path under the recordings base. It strips any leading occurrences of
+// "recordings/" and anything before the last "/recordings/" segment. It rejects
+// absolute or parent-directory traversals.
+func normalizeRecordingsRelative(p string) (string, error) {
+	s := strings.TrimSpace(p)
+    if s == "" {
+        return "", fmt.Errorf("invalid path")
+    }
+	// unify slashes
+	s = strings.ReplaceAll(s, "\\", "/")
+	l := strings.ToLower(s)
+	if i := strings.LastIndex(l, "/recordings/"); i >= 0 {
+        s = s[i+len("/recordings/"):]
+    }
+    // strip repeated leading recordings/
+    for {
+        ll := strings.ToLower(s)
+        if strings.HasPrefix(ll, "recordings/") {
+            s = s[len("recordings/"):]
+        } else {
+            break
+        }
+    }
+    s = strings.TrimPrefix(s, "/")
+    s = filepath.Clean(s)
+    if s == "." || strings.HasPrefix(s, "..") || filepath.IsAbs(s) {
+        return "", fmt.Errorf("invalid path")
+    }
+    return s, nil
+}
+
+// isInsideBase checks that p is at or within base.
+func isInsideBase(p, base string) bool {
+    base = filepath.Clean(base)
+    p = filepath.Clean(p)
+    rel, err := filepath.Rel(base, p)
+    if err != nil {
+        return false
+    }
+    return rel == "." || (!strings.HasPrefix(rel, "..") && !filepath.IsAbs(rel))
 }

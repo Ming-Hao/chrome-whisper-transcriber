@@ -206,13 +206,31 @@
       padding: 6px 10px;
       border-radius: 8px;
       border: 1px solid #ccc;
-      background-color: transparent;
+      color: CanvasText;           /* follow system text color */
+      background-color: Canvas;    /* follow system background */
+      appearance: auto;            /* use native control styling */
       transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+    }
+
+    /* Ensure dropdown list items also have proper contrast */
+    .toolbar select option {
+      color: CanvasText;
+      background-color: Canvas;
     }
 
     .toolbar select:hover {
       border-color: #3b82f6;
       box-shadow: 0 2px 6px rgba(59, 130, 246, 0.15);
+    }
+
+    /* Dark mode safeguard in case system colors aren't applied as expected */
+    @media (prefers-color-scheme: dark) {
+      .toolbar select,
+      .toolbar select option {
+        color: #eee;
+        background-color: #222;
+        border-color: #555;
+      }
     }
 
     .badge {
@@ -319,6 +337,34 @@
         return "/" + path.replace(/^(\.\/)+/, "").replace(/^\/+/, "");
       }
     }
+    // Normalize any path (absolute Windows, mixed slashes, etc.) to a recordings-relative URL path
+    // Examples (input -> output):
+    //   "recordings/uuid/folder/transcript.txt" -> "recordings/uuid/folder/transcript.txt"
+    //   "recordings\\uuid\\folder\\transcript.txt" -> "recordings/uuid/folder/transcript.txt"
+    //   "/Users/me/project/recordings/uuid/folder/transcript.txt" -> "recordings/uuid/folder/transcript.txt"
+    //   "C:\\Users\\me\\project\\recordings\\uuid\\folder\\transcript.txt" -> "recordings/uuid/folder/transcript.txt"
+    //   "recordings/recordings/uuid/transcript.txt" -> "recordings/uuid/transcript.txt"
+    //   "uuid/folder/transcript.txt" -> "recordings/uuid/folder/transcript.txt"
+    //   "recordings" -> "recordings"
+    function toRecordingsRelative(p) {
+      if (!p) return "recordings";
+      let s = String(p).trim();
+      s = s.replace(/\\/g, "/"); // unify slashes
+      const lower = s.toLowerCase();
+      if (lower.startsWith("recordings/")) {
+        // already relative
+      } else {
+        const idx = lower.indexOf("/recordings/");
+        if (idx >= 0) {
+          s = s.slice(idx + 1); // drop the leading '/'
+        } else {
+          s = `recordings/${s.replace(/^\/+/, "")}`;
+        }
+      }
+      // collapse extra slashes and normalize prefix
+      s = s.replace(/\/+/, "/").replace(/^recordings\/+/, "recordings/");
+      return s;
+    }
     // Helper to append cache-busting query param to URL
     function withCacheBust(u) {
       try {
@@ -380,7 +426,7 @@
     }
 
     async function updateTranscriptOnServer(rec, textPath, newText) {
-      const cleanPath = textPath.startsWith("recordings/") ? textPath : `recordings/${textPath}`;
+      const cleanPath = toRecordingsRelative(textPath);
       const encodedPath = cleanPath
         .split("/")
         .map(segment => segment ? encodeURIComponent(segment) : segment)
@@ -608,7 +654,8 @@
         if (folder) {
           openFolderHeaderBtn.setAttribute("title", folder);
           openFolderHeaderBtn.addEventListener("click", async () => {
-            const target = folder.endsWith("/") ? folder : `${folder}/`;
+            const rel = toRecordingsRelative(folder);
+            const target = rel.endsWith("/") ? rel : `${rel}/`;
             openFolderHeaderBtn.disabled = true;
             const prevLabel = openFolderHeaderBtn.textContent;
             openFolderHeaderBtn.textContent = "Opening...";

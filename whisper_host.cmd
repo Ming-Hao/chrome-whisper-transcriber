@@ -4,6 +4,10 @@ set "PROJECT_DIR=%~dp0"
 
 set "PATH=C:\Users\mvp81\AppData\Local\Programs\Python\Python313;%PATH%"
 
+rem Ensure relative paths resolve from the project root
+rem Prevents creating nested paths like recordings\recordings
+cd /d "%PROJECT_DIR%"
+
 if exist "%PROJECT_DIR%venv\Scripts\python.exe" (
 set "PYTHON_EXE=%PROJECT_DIR%venv\Scripts\python.exe"
 ) else if exist "%PROJECT_DIR%venv\Scripts\activate.bat" (
