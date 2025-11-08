@@ -28,7 +28,8 @@
     "toggle-recording": {
       "suggested_key": {
         "default": "Alt+E",
-        "mac": "Alt+E"
+        "mac": "Alt+E",
+        "windows": "Alt+Shift+E"
       },
       "description": "Start or stop Whisper recording"
     }
