@@ -691,7 +691,12 @@ function renderHistoryEntries(entries) {
     meta.className = "history-entry-meta";
     let createdAt = "";
     if (entry?.createdAt) {
-      const parsed = new Date(entry.createdAt);
+      let createdAtValue = entry.createdAt;
+      if (typeof createdAtValue === "string" && createdAtValue.endsWith("Z")) {
+        // Legacy host versions stored local time but appended Z; strip to keep local interpretation.
+        createdAtValue = createdAtValue.slice(0, -1);
+      }
+      const parsed = new Date(createdAtValue);
       if (!Number.isNaN(parsed.getTime())) {
         createdAt = parsed.toLocaleString();
       }

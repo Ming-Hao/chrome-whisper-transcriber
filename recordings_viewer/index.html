@@ -328,13 +328,20 @@
   </template>
 
   <script>
+    function encodePathFragmentChars(p) {
+      // Encode characters (like #) that would otherwise be treated as URL fragments
+      return p.replace(/#/g, "%23");
+    }
+
     function toViewerPath(path) {
       if (!path) return path;
-      if (/^(?:[a-z]+:|\/\/|\/)/i.test(path)) return path; // absolute path or https
+      const sanitized = encodePathFragmentChars(path);
+      if (/^(?:[a-z]+:|\/\/)/i.test(path)) return sanitized; // already absolute (e.g., http://)
+      if (sanitized.startsWith("/")) return sanitized;
       try {
-        return new URL(path, location.origin + "/").toString();
+        return new URL(sanitized, location.origin + "/").toString();
       } catch {
-        return "/" + path.replace(/^(\.\/)+/, "").replace(/^\/+/, "");
+        return "/" + sanitized.replace(/^(\.\/)+/, "").replace(/^\/+/, "");
       }
     }
     // Normalize any path (absolute Windows, mixed slashes, etc.) to a recordings-relative URL path
