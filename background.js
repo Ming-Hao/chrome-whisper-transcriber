@@ -8,6 +8,7 @@ const popupPorts = new Set();
 const audioRequestMap = new Map();
 const historyRequestMap = new Map();
 const tabUUIDs = new Map();
+const overlayReadyTabs = new Set();
 
 const BADGE = {
   idle: {
@@ -48,6 +49,22 @@ const recordingState = {
 let offscreenReady = false;
 let offscreenReadyResolver = null;
 let activeRecordingContext = null;
+const platformShortcutHints = Object.freeze({
+  win: "Alt+Shift+E",
+  mac: "Alt+E",
+  linux: "Alt+E",
+  chromeos: "Alt+E",
+  openbsd: "Alt+E",
+});
+let stopShortcutHint = "Alt+E";
+if (chrome?.runtime?.getPlatformInfo) {
+  chrome.runtime.getPlatformInfo((info) => {
+    const hint = platformShortcutHints[info?.os];
+    if (hint) {
+      stopShortcutHint = hint;
+    }
+  });
+}
 
 function ensureTabUUID(tabId) {
   if (typeof tabId !== "number") {
@@ -107,8 +124,15 @@ chrome.tabs.onCreated.addListener((tab) => {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   tabUUIDs.delete(tabId);
+  overlayReadyTabs.delete(tabId);
   if (activeRecordingContext?.tabId === tabId) {
     activeRecordingContext = null;
+  }
+});
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo?.status === "loading") {
+    overlayReadyTabs.delete(tabId);
   }
 });
 
@@ -129,6 +153,64 @@ function broadcast(msg) {
       // ignore disconnected ports
     }
   }
+}
+
+async function ensureOverlayScript(tabId) {
+  if (typeof tabId !== "number") {
+    return false;
+  }
+  if (overlayReadyTabs.has(tabId)) {
+    return true;
+  }
+  try {
+    await chrome.tabs.sendMessage(tabId, {
+      type: MESSAGE_TYPES.CONTENT_OVERLAY,
+      action: "__ping",
+    });
+    overlayReadyTabs.add(tabId);
+    return true;
+  } catch (_) {
+    // fall through to explicit injection attempt
+  }
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ["recording_overlay.js"],
+    });
+    overlayReadyTabs.add(tabId);
+    return true;
+  } catch (err) {
+    console.warn("Failed to inject overlay script for tab", tabId, err);
+    return false;
+  }
+}
+
+function sendContentOverlay(tabId, payload, options = {}) {
+  if (typeof tabId !== "number") return;
+  const { ensureInjection = false } = options;
+  (async () => {
+    if (ensureInjection) {
+      const ready = await ensureOverlayScript(tabId);
+      if (!ready) return;
+    }
+    try {
+      await chrome.tabs.sendMessage(tabId, {
+        type: MESSAGE_TYPES.CONTENT_OVERLAY,
+        ...payload,
+      });
+    } catch (_) {
+      // Content script may be missing or page may not allow messaging; ignore.
+    }
+  })();
+}
+
+function showRecordingOverlay() {
+  const tabId = activeRecordingContext?.tabId ?? recordingState.tabId ?? null;
+  if (typeof tabId !== "number") return;
+  sendContentOverlay(tabId, {
+    action: "show",
+    text: `Whisper recording... Press ${stopShortcutHint} to stop.`,
+  }, { ensureInjection: true });
 }
 
 function buildRecordingStatusMessage() {
@@ -257,6 +339,10 @@ function ensureNativePort() {
 }
 
 function resetRecordingState() {
+  const overlayTabId = activeRecordingContext?.tabId ?? recordingState.tabId ?? null;
+  if (typeof overlayTabId === "number") {
+    sendContentOverlay(overlayTabId, { action: "hide" });
+  }
   recordingState.status = "idle";
   recordingState.tabId = null;
   recordingState.streamId = null;
@@ -636,8 +722,20 @@ chrome.commands.onCommand.addListener((command) => {
   }
 });
 
-chrome.runtime.onMessage.addListener((msg) => {
-  if (!msg || msg.source !== "offscreen") return;
+chrome.runtime.onMessage.addListener((msg, sender) => {
+  if (!msg) {
+    return;
+  }
+  if (msg.type === MESSAGE_TYPES.CONTENT_OVERLAY_READY) {
+    const tabId = sender?.tab?.id;
+    if (typeof tabId === "number") {
+      overlayReadyTabs.add(tabId);
+    }
+    return;
+  }
+  if (msg.source !== "offscreen") {
+    return;
+  }
 
   switch (msg.type) {
     case MESSAGE_TYPES.OFFSCREEN_READY:
@@ -669,6 +767,7 @@ chrome.runtime.onMessage.addListener((msg) => {
       } else {
         setBadge("connecting");
       }
+      showRecordingOverlay();
       broadcast({ type: MESSAGE_TYPES.RECORDING_STARTED, text: msg.text || "Recording started." });
       break;
 

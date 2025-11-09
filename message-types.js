@@ -2,6 +2,8 @@ export const MESSAGE_TYPES = Object.freeze({
   AUDIO: "audio",
   AUDIO_FILE: "audio-file",
   AUDIO_FILE_ERROR: "audio-file-error",
+  CONTENT_OVERLAY: "content-overlay",
+  CONTENT_OVERLAY_READY: "content-overlay-ready",
   ENSURE_NATIVE: "ensure-native",
   ERROR: "error",
   HOST_READY: "host-ready",
