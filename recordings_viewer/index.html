@@ -432,55 +432,55 @@
       return out;
     }
 
-    async function updateTranscriptOnServer(rec, textPath, newText) {
-      const cleanPath = toRecordingsRelative(textPath);
-      const encodedPath = cleanPath
-        .split("/")
-        .map(segment => segment ? encodeURIComponent(segment) : segment)
-        .join("/");
-      const apiUrl = toViewerPath(`api/transcripts/${encodedPath}`);
-      let res;
-      try {
-        res = await fetch(apiUrl, {
-          method: "PUT",
-          headers: { "Content-Type": "text/plain;charset=utf-8" },
-          body: newText,
-        });
-      } catch (err) {
-        throw new Error("Network error: " + err.message);
-      }
-      if (!res.ok) {
-        let message = res.statusText;
+    const Api = {
+      async updateTranscript(textPath, newText) {
+        const cleanPath = toRecordingsRelative(textPath);
+        const encodedPath = cleanPath
+          .split("/")
+          .map(segment => segment ? encodeURIComponent(segment) : segment)
+          .join("/");
+        const url = toViewerPath(`api/transcripts/${encodedPath}`);
+        let res;
         try {
-          const txt = await res.text();
-          if (txt) message = txt;
-        } catch { /* ignore */ }
-        throw new Error(message || `HTTP ${res.status}`);
-      }
-      return {};
-    }
-
-    async function openFolderOnServer(folderPath) {
-      const url = toViewerPath("api/open-folder");
-      let res;
-      try {
-        res = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ path: folderPath }),
-        });
-      } catch (err) {
-        throw new Error("Network error: " + err.message);
-      }
-      if (!res.ok) {
-        let message = res.statusText || `HTTP ${res.status}`;
+          res = await fetch(url, {
+            method: "PUT",
+            headers: { "Content-Type": "text/plain;charset=utf-8" },
+            body: newText,
+          });
+        } catch (err) {
+          throw new Error("Network error: " + err.message);
+        }
+        if (!res.ok) {
+          let message = res.statusText;
+          try {
+            const txt = await res.text();
+            if (txt) message = txt;
+          } catch { /* ignore */ }
+          throw new Error(message || `HTTP ${res.status}`);
+        }
+      },
+      async openFolder(folderPath) {
+        const url = toViewerPath("api/open-folder");
+        let res;
         try {
-          const txt = await res.text();
-          if (txt) message = txt;
-        } catch { /* ignore */ }
-        throw new Error(message);
-      }
-    }
+          res = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ path: folderPath }),
+          });
+        } catch (err) {
+          throw new Error("Network error: " + err.message);
+        }
+        if (!res.ok) {
+          let message = res.statusText || `HTTP ${res.status}`;
+          try {
+            const txt = await res.text();
+            if (txt) message = txt;
+          } catch { /* ignore */ }
+          throw new Error(message);
+        }
+      },
+    };
 
     // Build a row in DOM from one record
     function buildRow(rec) {
@@ -631,7 +631,7 @@
           cancelBtn.disabled = true;
           saveBtn.textContent = "Saving...";
           try {
-            await updateTranscriptOnServer(rec, textPath, newText);
+            await Api.updateTranscript(textPath, newText);
             renderTranscript(newText);
             rec.transcriptOverride = newText;
             rec.transcriptEditedAt = new Date().toISOString();
@@ -667,7 +667,7 @@
             const prevLabel = openFolderHeaderBtn.textContent;
             openFolderHeaderBtn.textContent = "Opening...";
             try {
-              await openFolderOnServer(target);
+              await Api.openFolder(target);
               setRowMessage("", "open-folder");
             } catch (err) {
               setRowMessage("Failed to open folder: " + err.message, "open-folder");
