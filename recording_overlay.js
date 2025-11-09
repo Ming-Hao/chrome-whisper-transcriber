@@ -19,6 +19,24 @@
     textNode: null,
   };
 
+  function getMountTarget() {
+    return document.fullscreenElement || document.documentElement || document.body;
+  }
+
+  function mountOverlayRoot(root) {
+    if (!root) {
+      return;
+    }
+    const target = getMountTarget();
+    if (!target) {
+      return;
+    }
+    if (root.parentNode === target) {
+      return;
+    }
+    target.appendChild(root);
+  }
+
   (function notifyBackgroundReady() {
     if (!chrome?.runtime?.sendMessage) {
       return;
@@ -75,15 +93,15 @@
     root.appendChild(dot);
     root.appendChild(textNode);
 
-    const mountPoint = document.documentElement || document.body;
+    const mountPoint = getMountTarget();
     if (mountPoint) {
       mountPoint.appendChild(root);
     } else {
       document.addEventListener(
         "DOMContentLoaded",
         () => {
-          const lateMount = document.documentElement || document.body;
-          if (lateMount && !lateMount.contains(root)) {
+          const lateMount = getMountTarget();
+          if (lateMount) {
             lateMount.appendChild(root);
           }
         },
@@ -133,5 +151,12 @@
     } else if (msg.action === "set-default-text") {
       setDefaultText(msg.text);
     }
+  });
+
+  document.addEventListener("fullscreenchange", () => {
+    if (!overlayState.root) {
+      return;
+    }
+    mountOverlayRoot(overlayState.root);
   });
 })();
