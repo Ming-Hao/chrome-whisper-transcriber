@@ -10,32 +10,46 @@ const historyRequestMap = new Map();
 const tabUUIDs = new Map();
 const overlayReadyTabs = new Set();
 
+const DEFAULT_STOP_SHORTCUT = "Alt+E";
+
+const platformShortcutHints = Object.freeze({
+  win: "Alt+Shift+E",
+  mac: "Alt+E",
+  linux: "Alt+E",
+  chromeos: "Alt+E",
+  openbsd: "Alt+E",
+});
+let stopShortcutHint = DEFAULT_STOP_SHORTCUT;
+let currentBadgeState = "idle";
+let pendingShortcutRefresh = null;
+
+// Note: stopShortcutHint refreshes asynchronously, so badge titles lag slightly after shortcut changes.
 const BADGE = {
-  idle: {
+  idle: () => ({
     text: "",
     color: "#777777",
-    title: "Whisper Transcriber: Idle (Press Alt+E to start recording)",
-  },
-  connecting: {
+    title: `Whisper Transcriber: Idle (Press ${stopShortcutHint} to start recording)`,
+  }),
+  connecting: () => ({
     text: "...",
     color: "#777777",
     title: "Connecting to native host...",
-  },
-  ready: {
+  }),
+  ready: () => ({
     text: "ON",
     color: "#2ECC71",
-    title: "Native host ready (Press Alt+E to start recording)",
-  },
-  recording: {
+    title: `Native host ready (Press ${stopShortcutHint} to start recording)`,
+  }),
+  recording: () => ({
     text: "REC",
     color: "#D9534F",
-    title: "Recording (Press Alt+E to stop and send audio)",
-  },
-  error: {
+    title: `Recording (Press ${stopShortcutHint} to stop and send audio)`,
+  }),
+  error: () => ({
     text: "!",
     color: "#D9534F",
     title: "Native host not connected. Please start it before retrying.",
-  },
+  }),
 };
 
 const recordingState = {
@@ -49,21 +63,76 @@ const recordingState = {
 let offscreenReady = false;
 let offscreenReadyResolver = null;
 let activeRecordingContext = null;
-const platformShortcutHints = Object.freeze({
-  win: "Alt+Shift+E",
-  mac: "Alt+E",
-  linux: "Alt+E",
-  chromeos: "Alt+E",
-  openbsd: "Alt+E",
-});
-let stopShortcutHint = "Alt+E";
-if (chrome?.runtime?.getPlatformInfo) {
-  chrome.runtime.getPlatformInfo((info) => {
-    const hint = platformShortcutHints[info?.os];
-    if (hint) {
-      stopShortcutHint = hint;
+
+function buildRecordingOverlayText() {
+  return `Whisper recording... Press ${stopShortcutHint} to stop.`;
+}
+
+function getPlatformInfo() {
+  if (!chrome?.runtime?.getPlatformInfo) {
+    return Promise.resolve(null);
+  }
+  return new Promise((resolve) => {
+    try {
+      chrome.runtime.getPlatformInfo((info) => resolve(info || null));
+    } catch (err) {
+      console.warn("Failed to read platform info:", err);
+      resolve(null);
     }
   });
+}
+
+async function fetchToggleRecordingShortcut() {
+  if (!chrome?.commands?.getAll) {
+    return null;
+  }
+  try {
+    const commands = await chrome.commands.getAll();
+    const toggleRecording = commands?.find((cmd) => cmd.name === "toggle-recording");
+    return toggleRecording?.shortcut || null;
+  } catch (err) {
+    console.warn("Failed to load commands:", err);
+    return null;
+  }
+}
+
+async function resolveShortcutHint() {
+  const commandShortcut = await fetchToggleRecordingShortcut();
+  if (commandShortcut) {
+    return commandShortcut;
+  }
+  const platformInfo = await getPlatformInfo();
+  if (platformInfo?.os && platformShortcutHints[platformInfo.os]) {
+    return platformShortcutHints[platformInfo.os];
+  }
+  return DEFAULT_STOP_SHORTCUT;
+}
+
+function broadcastOverlayDefaultText() {
+  const text = buildRecordingOverlayText();
+  for (const tabId of overlayReadyTabs) {
+    sendContentOverlay(tabId, { action: "set-default-text", text });
+  }
+}
+
+function refreshStopShortcutHint() {
+  if (pendingShortcutRefresh) {
+    return pendingShortcutRefresh;
+  }
+  pendingShortcutRefresh = (async () => {
+    try {
+      const hint = await resolveShortcutHint();
+      stopShortcutHint = hint || DEFAULT_STOP_SHORTCUT;
+    } catch (err) {
+      console.warn("Failed to refresh shortcut hint:", err);
+      stopShortcutHint = DEFAULT_STOP_SHORTCUT;
+    } finally {
+      setBadge(currentBadgeState);
+      broadcastOverlayDefaultText();
+      pendingShortcutRefresh = null;
+    }
+  })();
+  return pendingShortcutRefresh;
 }
 
 function ensureTabUUID(tabId) {
@@ -137,13 +206,16 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
 });
 
 function setBadge(state) {
-  const config = BADGE[state] || BADGE.idle;
+  const configFactory = BADGE[state] || BADGE.idle;
+  const config = typeof configFactory === "function" ? configFactory() : configFactory;
   chrome.action.setBadgeText({ text: config.text });
   chrome.action.setBadgeBackgroundColor({ color: config.color });
   chrome.action.setTitle({ title: config.title });
+  currentBadgeState = state;
 }
 
 setBadge("idle");
+refreshStopShortcutHint();
 
 function broadcast(msg) {
   for (const port of popupPorts) {
@@ -209,7 +281,7 @@ function showRecordingOverlay() {
   if (typeof tabId !== "number") return;
   sendContentOverlay(tabId, {
     action: "show",
-    text: `Whisper recording... Press ${stopShortcutHint} to stop.`,
+    text: buildRecordingOverlayText(),
   }, { ensureInjection: true });
 }
 
@@ -568,10 +640,12 @@ function handleAsyncFailure(context, err) {
 }
 
 function startRecording() {
+  refreshStopShortcutHint();
   startRecordingFlow().catch((err) => handleAsyncFailure("Start recording failed", err));
 }
 
 function stopRecording() {
+  refreshStopShortcutHint();
   stopRecordingFlow()
     .catch((err) => handleAsyncFailure("Stop recording failed", err));
 }
@@ -730,6 +804,10 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
     const tabId = sender?.tab?.id;
     if (typeof tabId === "number") {
       overlayReadyTabs.add(tabId);
+      sendContentOverlay(tabId, {
+        action: "set-default-text",
+        text: buildRecordingOverlayText(),
+      });
     }
     return;
   }

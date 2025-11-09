@@ -11,6 +11,7 @@
 
   const OVERLAY_ID = "__whisper_rec_overlay";
   const DEFAULT_TEXT = "Whisper recording... Press Alt+E (Windows: Alt+Shift+E) to stop.";
+  let configuredDefaultText = DEFAULT_TEXT;
   const OVERLAY_READY_MESSAGE = "content-overlay-ready";
 
   const overlayState = {
@@ -69,7 +70,7 @@
     ].join(";");
 
     const textNode = document.createElement("span");
-    textNode.textContent = DEFAULT_TEXT;
+    textNode.textContent = configuredDefaultText;
 
     root.appendChild(dot);
     root.appendChild(textNode);
@@ -95,12 +96,20 @@
     return overlayState;
   }
 
+  function setDefaultText(text) {
+    const fallback = typeof text === "string" && text.trim().length > 0 ? text.trim() : DEFAULT_TEXT;
+    configuredDefaultText = fallback;
+    if (overlayState.textNode) {
+      overlayState.textNode.textContent = fallback;
+    }
+  }
+
   function showOverlay(text) {
     const overlay = ensureOverlayRoot();
     if (!overlay?.root) {
       return;
     }
-    overlay.textNode.textContent = typeof text === "string" && text.trim().length > 0 ? text : DEFAULT_TEXT;
+    overlay.textNode.textContent = typeof text === "string" && text.trim().length > 0 ? text : configuredDefaultText;
     overlay.root.style.opacity = "1";
     overlay.root.style.transform = "translateY(0)";
   }
@@ -121,6 +130,8 @@
       showOverlay(msg.text);
     } else if (msg.action === "hide") {
       hideOverlay();
+    } else if (msg.action === "set-default-text") {
+      setDefaultText(msg.text);
     }
   });
 })();
