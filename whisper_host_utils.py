@@ -45,14 +45,47 @@ MAX_PREFIX_CHARS = 60
 
 
 def _build_folder_prefix(tab_title):
+    """
+    Cleans and truncates a tab title to create a safe folder prefix.
+
+    This function removes characters that are unsafe for file paths,
+    handles excessive whitespace, and ensures the resulting prefix
+    is within a maximum length, preventing path traversal vulnerabilities.
+
+    Examples:
+        >>> _build_folder_prefix("My awesome Video Title!")
+        'My awesome Video Title'
+        >>> _build_folder_prefix("../../etc/passwd")
+        'etcpasswd'
+        >>> _build_folder_prefix("  Some   Title with special chars /\\:*?\"<>| and dots.. ")
+        'Some Title with special chars and dots'
+        >>> _build_folder_prefix("")
+        'recording'
+        >>> _build_folder_prefix("   ")
+        'recording'
+    """
     if not tab_title or not tab_title.strip():
         return "recording"
 
-    collapsed = re.sub(r"\s+", " ", tab_title).strip()
-    sanitized = re.sub(r"[\\/:*?\"<>|]+", "_", collapsed)
-    trimmed = sanitized.replace("\0", "")[:MAX_PREFIX_CHARS].strip()
-    cleaned = trimmed.strip("._-")
-    return cleaned or "recording"
+    # Remove leading/trailing whitespace
+    cleaned_title = tab_title.strip()
+
+    # Replace any character that is NOT alphanumeric, space, hyphen, or underscore with an empty string.
+    # This is much stricter than the original regex and prevents common path traversal techniques.
+    cleaned_title = re.sub(r'[^\w\s-]', '', cleaned_title)
+
+    # Replace multiple spaces with a single space and trim whitespace again
+    cleaned_title = re.sub(r'\s+', ' ', cleaned_title).strip()
+
+    # Ensure no leading/trailing dots or hyphens that might be problematic in some systems
+    # For example, "..." or "---" might be interpreted strangely or just look bad.
+    cleaned_title = cleaned_title.strip('.-_')
+
+    # Trim to MAX_PREFIX_CHARS
+    trimmed = cleaned_title[:MAX_PREFIX_CHARS].strip()
+
+    # If the trimmed name is empty after all sanitization, use "recording"
+    return trimmed or "recording"
 
 
 def save_recording_bundle(
