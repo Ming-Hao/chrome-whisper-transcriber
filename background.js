@@ -875,3 +875,17 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
       break;
   }
 });
+
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.contextMenus.create({
+    id: "toggle-recording-context",
+    title: "Start/Stop Recording",
+    contexts: ["all"]
+  });
+});
+
+chrome.contextMenus.onClicked.addListener((info) => {
+  if (info.menuItemId === "toggle-recording-context") {
+    toggleRecording();
+  }
+});
